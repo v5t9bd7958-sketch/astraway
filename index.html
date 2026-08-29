@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0a0a1a">
+  <title>Звёздный Садовник</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #0a0a1a; touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+    #game-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: #0a0a1a; }
+    #game-canvas { display: block; touch-action: none; }
+    #ui-layer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 100; }
+    #loading-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #0a0a1a; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 999; transition: opacity 0.8s ease; }
+    #loading-screen.hidden { opacity: 0; pointer-events: none; }
+    .loading-star { width: 60px; height: 60px; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { transform: scale(1); opacity: 0.6; } 50% { transform: scale(1.2); opacity: 1; } }
+    .loading-text { color: #aabbee; font-family: system-ui, sans-serif; font-size: 14px; margin-top: 20px; letter-spacing: 3px; text-transform: uppercase; }
+    .loading-bar { width: 120px; height: 2px; background: #1a1a3a; margin-top: 16px; border-radius: 1px; overflow: hidden; }
+    .loading-bar-fill { height: 100%; width: 0%; background: #6b8cce; transition: width 0.3s ease; }
+    #dialogue-box { position: absolute; bottom: max(16px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); width: min(90%, 360px); background: rgba(10, 12, 30, 0.92); border: 1px solid rgba(107, 140, 206, 0.3); border-radius: 16px; padding: 16px 20px; color: #ccd6f0; font-family: system-ui, sans-serif; font-size: 14px; line-height: 1.5; pointer-events: auto; opacity: 0; transition: opacity 0.4s ease; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+    #dialogue-box.visible { opacity: 1; }
+    #dialogue-box .dialogue-title { color: #6b8cce; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin-bottom: 6px; }
+    #inventory-bar { position: absolute; top: max(12px, env(safe-area-inset-top)); right: 12px; display: flex; gap: 8px; pointer-events: auto; }
+    .inv-slot { width: 48px; height: 48px; background: rgba(10, 12, 30, 0.85); border: 1.5px solid rgba(107, 140, 206, 0.25); border-radius: 12px; display: flex; align-items: center; justify-content: center; transition: all 0.2s ease; position: relative; }
+    .inv-slot.active { border-color: #6b8cce; box-shadow: 0 0 12px rgba(107, 140, 206, 0.4); transform: scale(1.08); }
+    .inv-slot canvas { width: 32px; height: 32px; }
+    #hint-btn { position: absolute; top: max(12px, env(safe-area-inset-top)); left: 12px; width: 40px; height: 40px; background: rgba(10, 12, 30, 0.85); border: 1.5px solid rgba(107, 140, 206, 0.25); border-radius: 50%; color: #6b8cce; font-size: 18px; display: flex; align-items: center; justify-content: center; pointer-events: auto; cursor: pointer; transition: all 0.2s ease; }
+    #hint-btn:active { transform: scale(0.92); }
+    #completion-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(5, 6, 18, 0.95); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 500; pointer-events: auto; }
+    #completion-screen.visible { display: flex; }
+    .completion-title { color: #e8d5a3; font-size: 24px; font-weight: 300; letter-spacing: 4px; text-transform: uppercase; margin-bottom: 12px; text-align: center; }
+    .completion-sub { color: #8899bb; font-size: 14px; text-align: center; max-width: 280px; line-height: 1.6; margin-bottom: 32px; }
+    .completion-btn { background: rgba(107, 140, 206, 0.2); border: 1px solid rgba(107, 140, 206, 0.5); color: #aabbee; padding: 12px 32px; border-radius: 24px; font-size: 14px; letter-spacing: 2px; text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; }
+    .completion-btn:active { background: rgba(107, 140, 206, 0.35); transform: scale(0.96); }
+  </style>
+</head>
+<body>
+  <div id="loading-screen">
+    <svg class="loading-star" viewBox="0 0 100 100">
+      <path d="M50 5 L61 38 L95 38 L68 58 L79 91 L50 71 L21 91 L32 58 L5 38 L39 38 Z" fill="#6b8cce" opacity="0.8"/>
+      <circle cx="50" cy="50" r="8" fill="#e8d5a3" opacity="0.9"/>
+    </svg>
+    <div class="loading-text">Загрузка</div>
+    <div class="loading-bar"><div class="loading-bar-fill" id="loading-fill"></div></div>
+  </div>
+  <div id="game-container"><canvas id="game-canvas"></canvas></div>
+  <div id="ui-layer">
+    <div id="hint-btn">?</div>
+    <div id="inventory-bar"></div>
+    <div id="dialogue-box"><div class="dialogue-title" id="dialogue-title"></div><div id="dialogue-text"></div></div>
+    <div id="completion-screen">
+      <div class="completion-title">Сцена завершена</div>
+      <div class="completion-sub">Древо ожило. Портал открылся.<br>Куда он ведёт — узнаем в следующей главе.</div>
+      <button class="completion-btn" id="restart-btn">Начать сначала</button>
+    </div>
+  </div>
+<script>
+class Renderer {
+  constructor(canvas) {
+    this.canvas = canvas; this.ctx = canvas.getContext('2d', { alpha: false });
+    this.dpr = Math.min(window.devicePixelRatio || 1, 2); this.width = 0; this.height = 0;
+    this.aspect = 1; this.sceneScale = 1; this.offsetX = 0; this.offsetY = 0; this.resize();
+  }
+  resize() {
+    const c = this.canvas.parentElement, w = c.clientWidth, h = c.clientHeight;
+    this.width = w; this.height = h; this.aspect = w / h;
+    this.canvas.width = w * this.dpr; this.canvas.height = h * this.dpr;
+    this.canvas.style.width = w + 'px'; this.canvas.style.height = h + 'px';
+    this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    const da = 9 / 16;
+    if (this.aspect > da) { this.sceneScale = h / 1000; this.offsetX = (w - 1000 * this.sceneScale * (this.aspect / da)) / 2; this.offsetY = 0; }
+    else { this.sceneScale = w / (1000 * da); this.offsetX = 0; this.offsetY = (h - 1000 * this.sceneScale) / 2; }
+  }
+  nx(x) { return this.offsetX + x * 562.5 * this.sceneScale; }
+  ny(y) { return this.offsetY + y * 1000 * this.sceneScale; }
+  ns(s) { return s * this.sceneScale; }
+  unx(px) { return (px - this.offsetX) / (562.5 * this.sceneScale); }
+  uny(py) { return (py - this.offsetY) / (1000 * this.sceneScale); }
+  clear() { this.ctx.fillStyle = '#0a0a1a'; this.ctx.fillRect(0, 0, this.width, this.height); }
+  drawStars(t) { const c = this.ctx, sd = 12345, rng = n => { let x = Math.sin(n * 127.1 + sd) * 43758.5453; return x - Math.floor(x); }; for (let i = 0; i < 150; i++) { const sx = rng(i * 3) * this.width, sy = rng(i * 3 + 1) * this.height * 0.7, sz = rng(i * 3 + 2) * 2 + 0.5, tw = Math.sin(t * 0.002 + i * 1.5) * 0.5 + 0.5; c.fillStyle = 'rgba(200,210,255,' + (0.3 + tw * 0.5) + ')'; c.beginPath(); c.arc(sx, sy, sz, 0, Math.PI * 2); c.fill(); } }
+  drawNebula(t) { const c = this.ctx, cx = this.width * 0.5, cy = this.height * 0.35, g = c.createRadialGradient(cx, cy, 0, cx, cy, this.height * 0.6), p = Math.sin(t * 0.001) * 0.05 + 0.1; g.addColorStop(0, 'rgba(40,30,80,' + p + ')'); g.addColorStop(0.5, 'rgba(20,15,50,' + (p * 0.5) + ')'); g.addColorStop(1, 'rgba(10,10,26,0)'); c.fillStyle = g; c.fillRect(0, 0, this.width, this.height); }
+  drawAsteroidSurface(t) { const c = this.ctx, gy = this.ny(0.72), w = this.width; c.fillStyle = '#1a1525'; c.beginPath(); c.moveTo(0, this.height); c.lineTo(0, gy); c.bezierCurveTo(w * 0.2, gy - this.ns(30), w * 0.4, gy + this.ns(20), w * 0.5, gy); c.bezierCurveTo(w * 0.6, gy - this.ns(25), w * 0.8, gy + this.ns(15), w, gy - this.ns(10)); c.lineTo(w, this.height); c.closePath(); c.fill(); c.fillStyle = 'rgba(30,25,45,0.6)'; c.beginPath(); c.ellipse(this.nx(0.15), this.ny(0.82), this.ns(40), this.ns(15), 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(this.nx(0.75), this.ny(0.78), this.ns(60), this.ns(20), 0.1, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(this.nx(0.45), this.ny(0.88), this.ns(25), this.ns(8), -0.2, 0, Math.PI * 2); c.fill(); c.strokeStyle = 'rgba(107,140,206,0.08)'; c.lineWidth = this.ns(2); c.beginPath(); c.moveTo(0, gy); c.bezierCurveTo(w * 0.2, gy - this.ns(30), w * 0.4, gy + this.ns(20), w * 0.5, gy); c.bezierCurveTo(w * 0.6, gy - this.ns(25), w * 0.8, gy + this.ns(15), w, gy - this.ns(10)); c.stroke(); }
+  drawDeadTree(st, t) { const c = this.ctx, x = this.nx(0.5), y = this.ny(0.72), s = this.ns(1); if (st.treeAlive) { const gl = Math.sin(t * 0.003) * 0.1 + 0.3; c.shadowColor = '#6b8cce'; c.shadowBlur = this.ns(20) * gl; c.fillStyle = '#3d2f1f'; c.beginPath(); c.moveTo(x - 12 * s, y); c.quadraticCurveTo(x - 8 * s, y - 80 * s, x - 15 * s, y - 140 * s); c.lineTo(x + 15 * s, y - 140 * s); c.quadraticCurveTo(x + 8 * s, y - 80 * s, x + 12 * s, y); c.closePath(); c.fill(); c.shadowBlur = 0; const br = [{ bx: -15, by: -140, a: -0.8, l: 60 }, { bx: 15, by: -140, a: 0.6, l: 55 }, { bx: -8, by: -100, a: -1.0, l: 45 }, { bx: 8, by: -100, a: 0.9, l: 40 }, { bx: 0, by: -120, a: -0.2, l: 50 }]; br.forEach(b => { const bx = x + b.bx * s, by = y + b.by * s, ex = bx + Math.cos(b.a) * b.l * s, ey = by + Math.sin(b.a) * b.l * s; c.strokeStyle = '#3d2f1f'; c.lineWidth = 3 * s; c.beginPath(); c.moveTo(bx, by); c.lineTo(ex, ey); c.stroke(); for (let i = 0; i < 5; i++) { const lx = ex + (Math.random() - 0.5) * 20 * s, ly = ey + (Math.random() - 0.5) * 20 * s, lg = Math.sin(t * 0.004 + i) * 0.2 + 0.6; c.fillStyle = 'rgba(107,180,140,' + lg + ')'; c.beginPath(); c.arc(lx, ly, (4 + Math.random() * 4) * s, 0, Math.PI * 2); c.fill(); } }); for (let i = 0; i < 8; i++) { const px = x + Math.sin(t * 0.001 + i * 2) * 30 * s, py = y - 100 * s + Math.cos(t * 0.0015 + i) * 40 * s - (t * 0.02 + i * 50) % 200 * s, pa = Math.max(0, 1 - ((t * 0.02 + i * 50) % 200 * s) / (200 * s)); c.fillStyle = 'rgba(150,220,180,' + (pa * 0.6) + ')'; c.beginPath(); c.arc(px, py, 2 * s, 0, Math.PI * 2); c.fill(); } } else { c.fillStyle = '#2a2018'; c.beginPath(); c.moveTo(x - 10 * s, y); c.quadraticCurveTo(x - 6 * s, y - 60 * s, x - 12 * s, y - 120 * s); c.lineTo(x + 12 * s, y - 120 * s); c.quadraticCurveTo(x + 6 * s, y - 60 * s, x + 10 * s, y); c.closePath(); c.fill(); c.strokeStyle = '#2a2018'; c.lineWidth = 2.5 * s; c.lineCap = 'round'; const db = [{ bx: -12, by: -120, a: -0.7, l: 45 }, { bx: 12, by: -120, a: 0.5, l: 40 }, { bx: -6, by: -85, a: -0.9, l: 35 }, { bx: 6, by: -85, a: 0.8, l: 30 }]; db.forEach(b => { c.beginPath(); c.moveTo(x + b.bx * s, y + b.by * s); c.lineTo(x + b.bx * s + Math.cos(b.a) * b.l * s, y + b.by * s + Math.sin(b.a) * b.l * s); c.stroke(); }); } }
+  drawCapsule(st, t) { const c = this.ctx, x = this.nx(0.72), y = this.ny(0.58), s = this.ns(1); if (st.capsuleOpen) return; c.fillStyle = 'rgba(60,70,100,0.8)'; c.strokeStyle = 'rgba(107,140,206,0.5)'; c.lineWidth = 2 * s; c.beginPath(); c.ellipse(x, y, 28 * s, 38 * s, 0, 0, Math.PI * 2); c.fill(); c.stroke(); c.fillStyle = 'rgba(200,220,255,0.15)'; c.beginPath(); c.ellipse(x - 8 * s, y - 10 * s, 8 * s, 14 * s, -0.3, 0, Math.PI * 2); c.fill(); c.fillStyle = 'rgba(200,80,80,0.7)'; c.beginPath(); c.arc(x, y + 25 * s, 4 * s, 0, Math.PI * 2); c.fill(); const gl = Math.sin(t * 0.003) * 0.15 + 0.3; c.fillStyle = 'rgba(232,213,163,' + gl + ')'; c.beginPath(); c.arc(x, y, 10 * s, 0, Math.PI * 2); c.fill(); }
+  drawMushroomColony(st, t) { const c = this.ctx, x = this.nx(0.22), y = this.ny(0.68), s = this.ns(1); c.fillStyle = '#2a1f35'; c.beginPath(); c.ellipse(x, y + 15 * s, 50 * s, 20 * s, 0, 0, Math.PI * 2); c.fill(); const ms = [{ dx: -25, dy: -5, h: 35, w: 18, hue: 280 }, { dx: 0, dy: 0, h: 45, w: 22, hue: 260 }, { dx: 22, dy: -3, h: 30, w: 16, hue: 300 }, { dx: -10, dy: 5, h: 25, w: 14, hue: 270 }, { dx: 14, dy: 8, h: 20, w: 12, hue: 290 }]; ms.forEach((m, i) => { const mx = x + m.dx * s, my = y + m.dy * s, br = Math.sin(t * 0.002 + i * 1.2) * 2 * s; c.fillStyle = '#c4b8d4'; c.beginPath(); c.ellipse(mx, my, m.w * 0.3 * s, m.h * 0.5 * s, 0, 0, Math.PI * 2); c.fill(); const cc = st.mushroomsHappy ? 'hsl(' + m.hue + ', 60%, 65%)' : 'hsl(' + m.hue + ', 30%, 40%)'; c.fillStyle = cc; c.beginPath(); c.ellipse(mx, my - m.h * 0.4 * s + br, m.w * s, m.h * 0.35 * s, 0, Math.PI, 0); c.fill(); if (st.mushroomsHappy) { c.fillStyle = 'rgba(255,255,255,0.4)'; c.beginPath(); c.arc(mx - 4 * s, my - m.h * 0.45 * s + br, 2 * s, 0, Math.PI * 2); c.arc(mx + 5 * s, my - m.h * 0.5 * s + br, 1.5 * s, 0, Math.PI * 2); c.fill(); } }); if (st.mushroomsHappy && !st.hasCrystal) { const cy = y - 55 * s + Math.sin(t * 0.003) * 3 * s; c.shadowColor = '#6b8cce'; c.shadowBlur = 15 * s; c.fillStyle = 'rgba(107,140,206,0.9)'; c.beginPath(); c.moveTo(x, cy - 15 * s); c.lineTo(x + 8 * s, cy); c.lineTo(x, cy + 20 * s); c.lineTo(x - 8 * s, cy); c.closePath(); c.fill(); c.shadowBlur = 0; } }
+  drawSpiderWeb(st, t) { const c = this.ctx, x = this.nx(0.85), y = this.ny(0.42), s = this.ns(1); c.strokeStyle = 'rgba(180,190,220,0.25)'; c.lineWidth = 0.8 * s; for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2; c.beginPath(); c.moveTo(x, y); c.lineTo(x + Math.cos(a) * 45 * s, y + Math.sin(a) * 45 * s); c.stroke(); } for (let r = 10; r <= 40; r += 10) { c.beginPath(); c.arc(x, y, r * s, 0, Math.PI * 2); c.stroke(); } if (!st.hasDew) { const dy = y + 12 * s + Math.sin(t * 0.002) * 2 * s; c.fillStyle = 'rgba(150,200,255,0.7)'; c.beginPath(); c.arc(x + 5 * s, dy, 5 * s, 0, Math.PI * 2); c.fill(); c.fillStyle = 'rgba(255,255,255,0.5)'; c.beginPath(); c.arc(x + 3.5 * s, dy - 1.5 * s, 1.5 * s, 0, Math.PI * 2); c.fill(); } }
+  drawPortal(st, t) { if (!st.portalOpen) return; const c = this.ctx, x = this.nx(0.5), y = this.ny(0.35), s = this.ns(1), p = Math.sin(t * 0.003) * 0.1 + 0.9, r = t * 0.001; c.save(); c.translate(x, y); c.rotate(r); c.strokeStyle = 'rgba(107,140,206,' + (0.4 * p) + ')'; c.lineWidth = 3 * s; c.beginPath(); c.arc(0, 0, 50 * s, 0, Math.PI * 2); c.stroke(); for (let i = 0; i < 3; i++) { c.rotate(Math.PI * 2 / 3); c.strokeStyle = 'rgba(200,180,255,' + (0.3 * p) + ')'; c.lineWidth = 1.5 * s; c.beginPath(); c.arc(15 * s, 0, 30 * s, 0, Math.PI * 2); c.stroke(); } c.restore(); const g = c.createRadialGradient(x, y, 0, x, y, 40 * s); g.addColorStop(0, 'rgba(150,180,255,' + (0.3 * p) + ')'); g.addColorStop(1, 'rgba(150,180,255,0)'); c.fillStyle = g; c.beginPath(); c.arc(x, y, 40 * s, 0, Math.PI * 2); c.fill(); }
+  drawHero(h, t) { const c = this.ctx, x = this.nx(h.x), y = this.ny(h.y), s = this.ns(h.scale || 1), f = h.facing || 1; c.save(); c.translate(x, y); c.scale(f, 1); c.fillStyle = 'rgba(0,0,0,0.3)'; c.beginPath(); c.ellipse(0, 18 * s, 14 * s, 4 * s, 0, 0, Math.PI * 2); c.fill(); const br = Math.sin(t * 0.003) * 1.5 * s; c.fillStyle = '#8B7355'; c.beginPath(); c.ellipse(0, 5 * s + br, 16 * s, 14 * s, 0, 0, Math.PI * 2); c.fill(); c.fillStyle = '#9B8365'; for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2 + t * 0.001; c.beginPath(); c.arc(Math.cos(a) * 14 * s, 5 * s + br + Math.sin(a) * 11 * s, 4 * s, 0, Math.PI * 2); c.fill(); } c.fillStyle = '#8B7355'; c.beginPath(); c.arc(0, -10 * s + br, 12 * s, 0, Math.PI * 2); c.fill(); c.fillStyle = '#7A6548'; c.beginPath(); c.ellipse(-8 * s, -20 * s + br, 4 * s, 7 * s, -0.4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(8 * s, -20 * s + br, 4 * s, 7 * s, 0.4, 0, Math.PI * 2); c.fill(); c.fillStyle = '#C4A882'; c.beginPath(); c.ellipse(-8 * s, -20 * s + br, 2 * s, 4 * s, -0.4, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(8 * s, -20 * s + br, 2 * s, 4 * s, 0.4, 0, Math.PI * 2); c.fill(); const eo = h.state === 'surprise' ? 1.5 * s : 0, bl = h.blinking ? 0.2 : 1; c.fillStyle = '#1a1a2e'; c.beginPath(); c.ellipse(-4.5 * s, -11 * s + br, 3.5 * s, 4 * s * bl, 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(4.5 * s + eo, -11 * s + br, 3.5 * s, 4 * s * bl, 0, 0, Math.PI * 2); c.fill(); if (!h.blinking) { c.fillStyle = 'rgba(255,255,255,0.8)'; c.beginPath(); c.arc(-3 * s, -12.5 * s + br, 1.2 * s, 0, Math.PI * 2); c.fill(); c.beginPath(); c.arc(6 * s + eo, -12.5 * s + br, 1.2 * s, 0, Math.PI * 2); c.fill(); } c.fillStyle = '#3d2f1f'; c.beginPath(); c.arc(0, -7 * s + br, 1.5 * s, 0, Math.PI * 2); c.fill(); if (h.state === 'success' || h.state === 'story') { c.strokeStyle = '#3d2f1f'; c.lineWidth = 1 * s; c.beginPath(); c.arc(0, -5 * s + br, 3 * s, 0.2, Math.PI - 0.2); c.stroke(); } else if (h.state === 'failure') { c.strokeStyle = '#3d2f1f'; c.lineWidth = 1 * s; c.beginPath(); c.arc(0, -3 * s + br, 3 * s, Math.PI + 0.2, -0.2); c.stroke(); } else { c.strokeStyle = '#3d2f1f'; c.lineWidth = 1 * s; c.beginPath(); c.moveTo(-2 * s, -5 * s + br); c.lineTo(2 * s, -5 * s + br); c.stroke(); } const aw = h.state === 'walk' ? Math.sin(t * 0.008) * 8 * s : h.state === 'interact' || h.state === 'use_item' ? Math.sin(t * 0.015) * 12 * s - 5 * s : 0; c.fillStyle = '#8B7355'; c.beginPath(); c.ellipse(-14 * s, 2 * s + br + aw, 4 * s, 8 * s, -0.3, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(14 * s, 2 * s + br - aw, 4 * s, 8 * s, 0.3, 0, Math.PI * 2); c.fill(); const lw = h.state === 'walk' ? Math.sin(t * 0.008 + Math.PI) * 4 * s : 0; c.fillStyle = '#7A6548'; c.beginPath(); c.ellipse(-7 * s, 16 * s + lw, 4 * s, 5 * s, 0, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(7 * s, 16 * s - lw, 4 * s, 5 * s, 0, 0, Math.PI * 2); c.fill(); if (h.heldItem) { c.save(); c.translate(12 * s, -2 * s + br - aw); if (h.heldItem === 'dew') { c.fillStyle = 'rgba(150,200,255,0.8)'; c.beginPath(); c.arc(0, 0, 4 * s, 0, Math.PI * 2); c.fill(); c.fillStyle = 'rgba(255,255,255,0.5)'; c.beginPath(); c.arc(-1.5 * s, -1.5 * s, 1.2 * s, 0, Math.PI * 2); c.fill(); } else if (h.heldItem === 'crystal') { c.shadowColor = '#6b8cce'; c.shadowBlur = 8 * s; c.fillStyle = 'rgba(107,140,206,0.9)'; c.beginPath(); c.moveTo(0, -6 * s); c.lineTo(4 * s, 0); c.lineTo(0, 8 * s); c.lineTo(-4 * s, 0); c.closePath(); c.fill(); c.shadowBlur = 0; } else if (h.heldItem === 'seed') { const gl = Math.sin(t * 0.003) * 0.2 + 0.8; c.shadowColor = '#e8d5a3'; c.shadowBlur = 10 * s; c.fillStyle = 'rgba(232,213,163,' + gl + ')'; c.beginPath(); c.arc(0, 0, 4 * s, 0, Math.PI * 2); c.fill(); c.shadowBlur = 0; } c.restore(); } c.restore(); }
+  drawDecorations(t) { const c = this.ctx, s = this.ns(1), px = this.nx(0.88), py = this.ny(0.74), sw = Math.sin(t * 0.0015) * 3 * s; c.strokeStyle = '#3a3045'; c.lineWidth = 2 * s; c.lineCap = 'round'; c.beginPath(); c.moveTo(px, py); c.quadraticCurveTo(px + sw, py - 30 * s, px + sw * 0.5, py - 55 * s); c.stroke(); c.fillStyle = '#4a3a55'; c.beginPath(); c.ellipse(px + sw * 0.5, py - 58 * s, 6 * s, 8 * s, sw * 0.02, 0, Math.PI * 2); c.fill(); c.fillStyle = 'rgba(107,140,206,0.3)'; c.beginPath(); c.arc(px + sw * 0.5 - 2 * s, py - 60 * s, 2 * s, 0, Math.PI * 2); c.fill(); const rs = [{ rx: 0.35, ry: 0.76, r: 8 }, { rx: 0.62, ry: 0.74, r: 6 }, { rx: 0.08, ry: 0.80, r: 10 }]; rs.forEach(r => { c.fillStyle = '#252030'; c.beginPath(); c.ellipse(this.nx(r.rx), this.ny(r.ry), r.r * s, r.r * 0.6 * s, 0, 0, Math.PI * 2); c.fill(); }); for (let i = 0; i < 20; i++) { const dx = this.nx(0.1 + (i * 0.04) % 0.8), dy = this.ny(0.3 + (i * 0.07) % 0.5) + Math.sin(t * 0.001 + i) * 10 * s, al = Math.sin(t * 0.002 + i * 2) * 0.2 + 0.2; c.fillStyle = 'rgba(180,190,220,' + al + ')'; c.beginPath(); c.arc(dx, dy, (0.5 + (i % 3)) * s, 0, Math.PI * 2); c.fill(); } }
+  drawHighlight(o, t) { if (!o.highlighted) return; const c = this.ctx, x = this.nx(o.x), y = this.ny(o.y), rx = o.hitW ? this.ns(o.hitW) / 2 : this.ns(o.w || 30), ry = o.hitH ? this.ns(o.hitH) / 2 : this.ns(o.h || 30), p = Math.sin(t * 0.005) * 0.15 + 0.25; c.strokeStyle = 'rgba(107,140,206,' + p + ')'; c.lineWidth = 2; c.setLineDash([4, 4]); c.beginPath(); c.ellipse(x, y, rx + 5, ry + 5, 0, 0, Math.PI * 2); c.stroke(); c.setLineDash([]); }
+  render(sc, h, os, st, t) { this.clear(); this.drawStars(t); this.drawNebula(t); this.drawAsteroidSurface(t); this.drawDecorations(t); this.drawDeadTree(st, t); this.drawCapsule(st, t); this.drawMushroomColony(st, t); this.drawSpiderWeb(st, t); this.drawPortal(st, t); const so = [...os].sort((a, b) => (a.z || 0) - (b.z || 0)); for (const o of so) { if (o.type === 'hero') continue; this.drawHighlight(o, t); } this.drawHero(h, t); }
+}
+
+class InputManager {
+  constructor(canvas, renderer) { this.canvas = canvas; this.renderer = renderer; this.pointers = new Map(); this.tapCallbacks = []; this.moveCallbacks = []; this.lastTapTime = 0; this.tapDelay = 300; this.tapDist = 10; this._onPointerDown = this._onPointerDown.bind(this); this._onPointerMove = this._onPointerMove.bind(this); this._onPointerUp = this._onPointerUp.bind(this); this._onPointerCancel = this._onPointerCancel.bind(this); canvas.addEventListener('pointerdown', this._onPointerDown, { passive: false }); canvas.addEventListener('pointermove', this._onPointerMove, { passive: false }); canvas.addEventListener('pointerup', this._onPointerUp, { passive: false }); canvas.addEventListener('pointercancel', this._onPointerCancel, { passive: false }); canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false }); canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false }); }
+  _getPos(e) { const r = this.canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top, nx: this.renderer.unx(e.clientX - r.left), ny: this.renderer.uny(e.clientY - r.top) }; }
+  _onPointerDown(e) { e.preventDefault(); const p = this._getPos(e); this.pointers.set(e.pointerId, { startX: p.x, startY: p.y, startTime: Date.now(), x: p.x, y: p.y }); }
+  _onPointerMove(e) { e.preventDefault(); const p = this._getPos(e); const pt = this.pointers.get(e.pointerId); if (pt) { pt.x = p.x; pt.y = p.y; } for (const cb of this.moveCallbacks) cb(p.nx, p.ny); }
+  _onPointerUp(e) { e.preventDefault(); const pt = this.pointers.get(e.pointerId); if (!pt) return; const dt = Date.now() - pt.startTime, d = Math.hypot(pt.x - pt.startX, pt.y - pt.startY); if (dt < this.tapDelay && d < this.tapDist * this.renderer.dpr) { const p = this._getPos(e); if (Date.now() - this.lastTapTime > 50) { this.lastTapTime = Date.now(); for (const cb of this.tapCallbacks) cb(p.nx, p.ny); } } this.pointers.delete(e.pointerId); }
+  _onPointerCancel(e) { this.pointers.delete(e.pointerId); }
+  onTap(cb) { this.tapCallbacks.push(cb); }
+  onMove(cb) { this.moveCallbacks.push(cb); }
+  destroy() { this.canvas.removeEventListener('pointerdown', this._onPointerDown); this.canvas.removeEventListener('pointermove', this._onPointerMove); this.canvas.removeEventListener('pointerup', this._onPointerUp); this.canvas.removeEventListener('pointercancel', this._onPointerCancel); }
+}
+
+class ParticleSystem {
+  constructor() { this.particles = []; }
+  burst(nx, ny, color, count = 10) { for (let i = 0; i < count; i++) { const a = Math.random() * Math.PI * 2, sp = 0.05 + Math.random() * 0.1; this.particles.push({ x: nx, y: ny, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.02, life: 1, decay: 0.01 + Math.random() * 0.02, size: 0.005 + Math.random() * 0.01, color: color, gravity: 0.001 }); } }
+  update() { for (let i = this.particles.length - 1; i >= 0; i--) { const p = this.particles[i]; p.x += p.vx; p.y += p.vy; p.vy += p.gravity; p.life -= p.decay; if (p.life <= 0) this.particles.splice(i, 1); } }
+  draw(ctx, renderer) { for (const p of this.particles) { const px = renderer.nx(p.x), py = renderer.ny(p.y), sz = renderer.ns(p.size * p.life); let col = p.color; if (col.startsWith('#')) { const r = parseInt(col.slice(1, 3), 16), g = parseInt(col.slice(3, 5), 16), b = parseInt(col.slice(5, 7), 16); ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + p.life + ')'; } else ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px, py, sz, 0, Math.PI * 2); ctx.fill(); } }
+}
+
+const QuestState = { START: 'START', EXPLORED: 'EXPLORED', DEW_FOUND: 'DEW_FOUND', MUSHROOMS_HAPPY: 'MUSHROOMS_HAPPY', CRYSTAL_FOUND: 'CRYSTAL_FOUND', CAPSULE_OPENED: 'CAPSULE_OPENED', SEED_FOUND: 'SEED_FOUND', TREE_PLANTED: 'TREE_PLANTED', TREE_GROWN: 'TREE_GROWN', PORTAL_OPEN: 'PORTAL_OPEN', COMPLETE: 'COMPLETE' };
+
+class QuestSystem {
+  constructor() { this.state = QuestState.START; this.history = [QuestState.START]; this.listeners = []; this.flags = { treeInspected: false, capsuleInspected: false, mushroomsInspected: false, webInspected: false, wrongItemUsed: false }; }
+  onTransition(cb) { this.listeners.push(cb); }
+  transition(ns, ctx = {}) { if (this.state === ns) return; const os = this.state; this.state = ns; this.history.push(ns); for (const cb of this.listeners) cb(os, ns, ctx); }
+  can(s) { return this.state === s; }
+  isAtLeast(s) { const o = Object.values(QuestState); return o.indexOf(this.state) >= o.indexOf(s); }
+  setFlag(k, v = true) { this.flags[k] = v; }
+  getFlag(k) { return !!this.flags[k]; }
+  reset() { this.state = QuestState.START; this.history = [QuestState.START]; this.flags = { treeInspected: false, capsuleInspected: false, mushroomsInspected: false, webInspected: false, wrongItemUsed: false }; }
+}
+
+class InventorySystem {
+  constructor() { this.items = []; this.selected = null; this.listeners = []; }
+  onChange(cb) { this.listeners.push(cb); }
+  add(it) { if (this.has(it.id)) return false; this.items.push({ ...it, state: 'available' }); this._notify(); return true; }
+  has(id) { return this.items.some(i => i.id === id); }
+  select(id) { if (this.selected === id) this.selected = null; else if (this.has(id)) this.selected = id; this._notify(); }
+  getSelected() { return this.items.find(i => i.id === this.selected) || null; }
+  consume(id) { const ix = this.items.findIndex(i => i.id === id); if (ix >= 0) { this.items[ix].state = 'consumed'; if (this.selected === id) this.selected = null; this._notify(); return true; } return false; }
+  remove(id) { this.items = this.items.filter(i => i.id !== id); if (this.selected === id) this.selected = null; this._notify(); }
+  reset() { this.items = []; this.selected = null; this._notify(); }
+  _notify() { for (const cb of this.listeners) cb([...this.items], this.selected); }
+  getItems() { return [...this.items]; }
+}
+
+class HitboxEngine {
+  constructor() { this.objects = []; }
+  register(o) { if (!o.id) o.id = Math.random().toString(36).slice(2); this.objects.push(o); this.objects.sort((a, b) => (b.z || 0) - (a.z || 0)); }
+  hitTest(nx, ny) { for (const o of this.objects) { if (!o.interactive || o.hidden) continue; const hw = (o.hitW || o.w || 0.08) / 2, hh = (o.hitH || o.h || 0.08) / 2; if (nx >= o.x - hw && nx <= o.x + hw && ny >= o.y - hh && ny <= o.y + hh) return o; } return null; }
+  setHighlight(nx, ny) { let hit = null; for (const o of this.objects) { o.highlighted = false; if (!o.interactive || o.hidden) continue; const hw = (o.hitW || o.w || 0.08) / 2, hh = (o.hitH || o.h || 0.08) / 2; if (!hit && nx >= o.x - hw && nx <= o.x + hw && ny >= o.y - hh && ny <= o.y + hh) { o.highlighted = true; hit = o; } } return hit; }
+  getAll() { return this.objects; }
+}
+
+const HeroState = { IDLE: 'idle', WALK: 'walk', INSPECT: 'inspect', INTERACT: 'interact', USE_ITEM: 'use_item', SURPRISE: 'surprise', SUCCESS: 'success', FAILURE: 'failure', STORY: 'story' };
+
+class Hero {
+  constructor(x = 0.5, y = 0.78) { this.x = x; this.y = y; this.targetX = x; this.targetY = y; this.facing = 1; this.state = HeroState.IDLE; this.scale = 1; this.blinking = false; this.heldItem = null; this.blinkTimer = 0; this.nextBlink = 2000 + Math.random() * 3000; this.stateTimer = 0; this.walkSpeed = 0.35; this.onStateChange = null; this.onReachTarget = null; this.animFrame = 0; }
+  update(dt, t) { this.blinkTimer += dt; if (this.blinkTimer > this.nextBlink) { this.blinking = true; if (this.blinkTimer > this.nextBlink + 150) { this.blinking = false; this.blinkTimer = 0; this.nextBlink = 2000 + Math.random() * 3000; } } if (this.state === HeroState.WALK) { const dx = this.targetX - this.x, dy = this.targetY - this.y, d = Math.hypot(dx, dy); if (d < 0.01) { this.x = this.targetX; this.y = this.targetY; this.setState(HeroState.IDLE); if (this.onReachTarget) this.onReachTarget(); } else { const m = Math.min(d, this.walkSpeed * dt / 1000); this.x += (dx / d) * m; this.y += (dy / d) * m; this.facing = dx > 0 ? 1 : -1; } } if (this.state === HeroState.SURPRISE || this.state === HeroState.SUCCESS || this.state === HeroState.FAILURE || this.state === HeroState.INTERACT || this.state === HeroState.USE_ITEM || this.state === HeroState.INSPECT || this.state === HeroState.STORY) { this.stateTimer += dt; const dur = { [HeroState.SURPRISE]: 1200, [HeroState.SUCCESS]: 1500, [HeroState.FAILURE]: 1200, [HeroState.INTERACT]: 1000, [HeroState.USE_ITEM]: 1200, [HeroState.INSPECT]: 1000, [HeroState.STORY]: 2000 }; if (this.stateTimer > (dur[this.state] || 1000)) this.setState(HeroState.IDLE); } this.animFrame += dt; }
+  setState(ns, ctx = {}) { if (this.state === ns) return; this.state = ns; this.stateTimer = 0; this.animFrame = 0; if (ctx.heldItem !== undefined) this.heldItem = ctx.heldItem; if (ctx.facing !== undefined) this.facing = ctx.facing; if (this.onStateChange) this.onStateChange(ns, ctx); }
+  walkTo(nx, ny, onA = null) { this.targetX = Math.max(0.05, Math.min(0.95, nx)); this.targetY = Math.max(0.65, Math.min(0.85, ny)); this.onReachTarget = onA; this.setState(HeroState.WALK); }
+  inspect() { this.setState(HeroState.INSPECT); }
+  interact() { this.setState(HeroState.INTERACT); }
+  useItem(iid) { this.setState(HeroState.USE_ITEM, { heldItem: iid }); }
+  surprise() { this.setState(HeroState.SURPRISE); }
+  success() { this.setState(HeroState.SUCCESS); }
+  failure() { this.setState(HeroState.FAILURE); }
+  story() { this.setState(HeroState.STORY); }
+  reset() { this.x = 0.5; this.y = 0.78; this.targetX = 0.5; this.targetY = 0.78; this.facing = 1; this.state = HeroState.IDLE; this.heldItem = null; this.stateTimer = 0; this.blinkTimer = 0; }
+}
+function createSceneObjects(quest, inventory, hero, dialogue, particles) {
+  const objects = [];
+  objects.push({
+    id: 'tree', type: 'object', x: 0.5, y: 0.72, z: 5, w: 0.12, h: 0.25, hitW: 0.18, hitH: 0.30, interactive: true, highlighted: false,
+    onInteract: () => {
+      if (quest.can('TREE_PLANTED') || quest.can('TREE_GROWN') || quest.can('PORTAL_OPEN') || quest.can('COMPLETE')) return;
+      if (quest.can('START') || quest.can('EXPLORED')) { hero.walkTo(0.5, 0.78, () => { hero.inspect(); quest.setFlag('treeInspected', true); if (!quest.getFlag('capsuleInspected')) dialogue.show('Герой', 'Мёртвое древо... Когда-то оно было прекрасным. Нужно найти способ оживить его.'); else dialogue.show('Герой', 'Это древо ждёт семя. Но где его найти?'); }); return; }
+      if (quest.isAtLeast('SEED_FOUND') && !quest.isAtLeast('TREE_PLANTED')) { hero.walkTo(0.5, 0.78, () => { hero.inspect(); dialogue.show('Герой', 'Нужно посадить звёздное семя в древо. Выберите семя в инвентаре и нажмите на древо.'); }); return; }
+    },
+    onUseItem: (item) => {
+      if (item.id === 'seed' && quest.can('SEED_FOUND')) { hero.walkTo(0.5, 0.78, () => { hero.useItem('seed'); inventory.consume('seed'); particles.burst(0.5, 0.65, '#e8d5a3', 20); setTimeout(() => { quest.transition('TREE_PLANTED'); dialogue.show('Герой', 'Семя погрузилось в корни древа...'); setTimeout(() => { quest.transition('TREE_GROWN'); particles.burst(0.5, 0.55, '#6b8cce', 30); dialogue.show('Герой', 'Древо оживает! Листья расцветают звёздным светом!'); hero.success(); setTimeout(() => { quest.transition('PORTAL_OPEN'); dialogue.show('Герой', 'Портал открылся над древом... Куда он ведёт?'); hero.story(); setTimeout(() => { quest.transition('COMPLETE'); }, 3000); }, 2500); }, 2500); }, 1500); }); return true; }
+      if (item.id === 'dew') { hero.walkTo(0.5, 0.78, () => { hero.failure(); dialogue.show('Герой', 'Роса не поможет древу. Оно нуждается в семени.'); }); return true; }
+      if (item.id === 'crystal') { hero.walkTo(0.5, 0.78, () => { hero.failure(); dialogue.show('Герой', 'Кристалл бесполезен здесь. Это ключ от чего-то другого.'); }); return true; }
+      return false;
+    }
+  });
+  objects.push({
+    id: 'capsule', type: 'object', x: 0.72, y: 0.58, z: 10, w: 0.08, h: 0.10, hitW: 0.14, hitH: 0.14, interactive: true, highlighted: false,
+    onInteract: () => {
+      if (quest.can('COMPLETE') || quest.can('PORTAL_OPEN') || quest.can('TREE_GROWN')) return;
+      if (quest.can('CAPSULE_OPENED') || quest.can('SEED_FOUND')) { hero.walkTo(0.68, 0.68, () => { hero.inspect(); dialogue.show('Герой', 'Капсула пуста. Звёздное семя уже у меня.'); }); return; }
+      if (quest.can('START') || quest.can('EXPLORED') || quest.can('DEW_FOUND') || quest.can('MUSHROOMS_HAPPY')) { hero.walkTo(0.68, 0.68, () => { hero.inspect(); quest.setFlag('capsuleInspected', true); if (!quest.getFlag('treeInspected')) dialogue.show('Герой', 'Капсула заперта. Внутри что-то светится... похоже на семя!'); else dialogue.show('Герой', 'Внутри — звёздное семя! Но капсула заперта кристаллическим замком.'); }); return; }
+    },
+    onUseItem: (item) => {
+      if (item.id === 'crystal' && quest.can('CRYSTAL_FOUND')) { hero.walkTo(0.68, 0.68, () => { hero.useItem('crystal'); inventory.consume('crystal'); particles.burst(0.72, 0.58, '#6b8cce', 15); setTimeout(() => { quest.transition('CAPSULE_OPENED'); dialogue.show('Герой', 'Кристалл подошёл! Капсула открылась!'); hero.success(); setTimeout(() => { quest.transition('SEED_FOUND'); inventory.add({ id: 'seed', name: 'Звёздное семя', icon: 'seed', usableOn: ['tree'] }); particles.burst(0.72, 0.58, '#e8d5a3', 20); dialogue.show('Герой', 'Я взял звёздное семя! Теперь нужно посадить его в древо.'); }, 1500); }, 1000); }); return true; }
+      if (item.id === 'dew') { hero.walkTo(0.68, 0.68, () => { hero.failure(); dialogue.show('Герой', 'Роса не откроет эту капсулу. Нужен кристалл-ключ.'); }); return true; }
+      if (item.id === 'seed') { hero.walkTo(0.68, 0.68, () => { hero.failure(); dialogue.show('Герой', 'Семя уже взято из капсулы. Не нужно класть его обратно.'); }); return true; }
+      return false;
+    }
+  });
+  objects.push({
+    id: 'mushrooms', type: 'object', x: 0.22, y: 0.68, z: 8, w: 0.14, h: 0.12, hitW: 0.18, hitH: 0.16, interactive: true, highlighted: false,
+    onInteract: () => {
+      if (quest.can('COMPLETE') || quest.can('PORTAL_OPEN')) return;
+      if (quest.can('MUSHROOMS_HAPPY') || quest.can('CRYSTAL_FOUND') || quest.can('CAPSULE_OPENED') || quest.can('SEED_FOUND')) { if (!inventory.has('crystal')) hero.walkTo(0.26, 0.76, () => { hero.inspect(); dialogue.show('Герой', 'Грибы довольны. Их кристалл теперь мой.'); }); else hero.walkTo(0.26, 0.76, () => { hero.inspect(); dialogue.show('Герой', 'Грибы радуются. Они такие милые, когда счастливы.'); }); return; }
+      hero.walkTo(0.26, 0.76, () => { hero.inspect(); quest.setFlag('mushroomsInspected', true); dialogue.show('Герой', 'Грибная колония... Они выглядят увядшими. Над ними парит кристалл, но они его охраняют. Может, им чего-то не хватает?'); });
+    },
+    onUseItem: (item) => {
+      if (item.id === 'dew' && (quest.can('DEW_FOUND') || quest.can('EXPLORED'))) { hero.walkTo(0.26, 0.76, () => { hero.useItem('dew'); inventory.consume('dew'); particles.burst(0.22, 0.62, '#88ccff', 20); setTimeout(() => { quest.transition('MUSHROOMS_HAPPY'); dialogue.show('Герой', 'Грибы впитали росу! Они расцвели и стали счастливы!'); hero.success(); setTimeout(() => { quest.transition('CRYSTAL_FOUND'); inventory.add({ id: 'crystal', name: 'Кристалл-ключ', icon: 'crystal', usableOn: ['capsule'] }); particles.burst(0.22, 0.55, '#6b8cce', 15); dialogue.show('Герой', 'Кристалл упал к моим лапам! Это ключ от капсулы!'); }, 1500); }, 1500); }); return true; }
+      if (item.id === 'crystal') { hero.walkTo(0.26, 0.76, () => { hero.failure(); dialogue.show('Герой', 'Грибы не хотят забирать кристалл обратно. Они уже довольны.'); }); return true; }
+      if (item.id === 'seed') { hero.walkTo(0.26, 0.76, () => { hero.failure(); dialogue.show('Герой', 'Грибам не нужно семя. Они хотят влаги.'); }); return true; }
+      return false;
+    }
+  });
+  objects.push({
+    id: 'spiderweb', type: 'object', x: 0.85, y: 0.42, z: 12, w: 0.08, h: 0.10, hitW: 0.12, hitH: 0.14, interactive: true, highlighted: false,
+    onInteract: () => {
+      if (quest.can('COMPLETE') || quest.can('PORTAL_OPEN')) return;
+      if (quest.can('DEW_FOUND') || quest.isAtLeast('MUSHROOMS_HAPPY')) { hero.walkTo(0.80, 0.55, () => { hero.inspect(); dialogue.show('Герой', 'Паутина пуста. Я уже взял каплю росы.'); }); return; }
+      hero.walkTo(0.80, 0.55, () => { hero.interact(); quest.setFlag('webInspected', true); inventory.add({ id: 'dew', name: 'Капля росы', icon: 'dew', usableOn: ['mushrooms'] }); quest.transition('DEW_FOUND'); particles.burst(0.85, 0.42, '#88ccff', 15); dialogue.show('Герой', 'Капля росы на паутине! Она светится странным голубым светом. Возьму её с собой.'); hero.success(); });
+    },
+    onUseItem: (item) => { hero.walkTo(0.80, 0.55, () => { hero.failure(); dialogue.show('Герой', 'Здесь нечего использовать. Росу нужно отнести грибам.'); }); return true; }
+  });
+  objects.push({
+    id: 'strange_plant', type: 'object', x: 0.88, y: 0.74, z: 6, w: 0.06, h: 0.10, hitW: 0.10, hitH: 0.12, interactive: true, highlighted: false,
+    onInteract: () => { if (quest.can('COMPLETE')) return; hero.walkTo(0.84, 0.78, () => { hero.inspect(); const msgs = ['Странное растение... Оно шепчет что-то на языке, которого я не знаю.', 'Этот цветок пульсирует в такт моему сердцебиению. Жутко и прекрасно.', 'Растение кажется живым. Но оно не хочет со мной разговаривать.']; dialogue.show('Герой', msgs[Math.floor(Math.random() * msgs.length)]); }); },
+    onUseItem: (item) => { hero.walkTo(0.84, 0.78, () => { hero.failure(); dialogue.show('Герой', 'Растение не реагирует. Оно слишком странное, чтобы понимать предметы.'); }); return true; }
+  });
+  objects.push({
+    id: 'crystal_rock', type: 'object', x: 0.38, y: 0.76, z: 4, w: 0.05, h: 0.04, hitW: 0.08, hitH: 0.07, interactive: true, highlighted: false,
+    onInteract: () => { if (quest.can('COMPLETE')) return; hero.walkTo(0.40, 0.80, () => { hero.inspect(); if (quest.can('START')) dialogue.show('Герой', 'Кристаллический камень... Он похож на замок той капсулы. Интересно, где найти ключ?'); else if (quest.can('EXPLORED') || quest.can('DEW_FOUND')) dialogue.show('Герой', 'Этот камень напоминает мне о капсуле. Нужен похожий кристалл, чтобы её открыть.'); else dialogue.show('Герой', 'Просто красивый камень. Ничего особенного.'); }); },
+    onUseItem: () => { hero.walkTo(0.40, 0.80, () => { hero.failure(); dialogue.show('Герой', 'Камень слишком твёрдый. Ничего не выйдет.'); }); return true; }
+  });
+  return objects;
+}
+
+class HUD {
+  constructor() {
+    this.dialogueBox = document.getElementById('dialogue-box'); this.dialogueTitle = document.getElementById('dialogue-title'); this.dialogueText = document.getElementById('dialogue-text');
+    this.inventoryBar = document.getElementById('inventory-bar'); this.hintBtn = document.getElementById('hint-btn');
+    this.completionScreen = document.getElementById('completion-screen'); this.restartBtn = document.getElementById('restart-btn');
+    this.dialogueTimer = null; this.onItemSelect = null; this.onRestart = null;
+    this.hintBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.showHint(); });
+    this.restartBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); if (this.onRestart) this.onRestart(); });
+  }
+  show(title, text, duration = 4000) { this.dialogueTitle.textContent = title; this.dialogueText.textContent = text; this.dialogueBox.classList.add('visible'); if (this.dialogueTimer) clearTimeout(this.dialogueTimer); this.dialogueTimer = setTimeout(() => { this.dialogueBox.classList.remove('visible'); }, duration); }
+  showHint() { const game = window.__game, cs = game && game.quest ? game.quest.state : 'START'; const hints = { START: 'Осмотрите мёртвое древо в центре. Что-то здесь не так...', EXPLORED: 'Исследуйте окрестности. На астероиде есть странные объекты.', DEW_FOUND: 'Капля росы светится. Может, кому-то она нужна? Посмотрите на грибы.', MUSHROOMS_HAPPY: 'Грибы довольны и отдали вам кристалл. Где можно его использовать?', CRYSTAL_FOUND: 'Кристалл похож на ключ. Попробуйте им открыть капсулу.', CAPSULE_OPENED: 'В капсуле — семя! Возьмите его и найдите, куда его посадить.', SEED_FOUND: 'Звёздное семя нужно посадить в мёртвое древо.', TREE_PLANTED: 'Семя погружается в корни... Подождите немного.', TREE_GROWN: 'Древо ожило! Что-то происходит...', PORTAL_OPEN: 'Портал открылся! Сцена завершена.', COMPLETE: 'Вы прошли сцену! Нажмите "Начать сначала" чтобы сыграть ещё раз.' }; const hint = hints[cs] || 'Осмотрите всё вокруг. Нажимайте на объекты и пробуйте предметы из инвентаря.'; this.show('Подсказка', hint, 5000); }
+  updateInventory(items, selected) { this.inventoryBar.innerHTML = ''; for (const item of items) { if (item.state === 'consumed') continue; const slot = document.createElement('div'); slot.className = 'inv-slot' + (item.id === selected ? ' active' : ''); const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; const ctx = canvas.getContext('2d'); this.drawItemIcon(ctx, item.icon, 32, 32, 20); slot.appendChild(canvas); slot.addEventListener('pointerdown', (e) => { e.stopPropagation(); if (this.onItemSelect) this.onItemSelect(item.id); }); this.inventoryBar.appendChild(slot); } }
+  drawItemIcon(ctx, icon, cx, cy, size) { if (icon === 'dew') { ctx.fillStyle = 'rgba(150,200,255,0.9)'; ctx.beginPath(); ctx.arc(cx, cy, size * 0.6, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(cx - size * 0.2, cy - size * 0.2, size * 0.2, 0, Math.PI * 2); ctx.fill(); } else if (icon === 'crystal') { ctx.shadowColor = '#6b8cce'; ctx.shadowBlur = 10; ctx.fillStyle = 'rgba(107,140,206,0.95)'; ctx.beginPath(); ctx.moveTo(cx, cy - size * 0.7); ctx.lineTo(cx + size * 0.5, cy); ctx.lineTo(cx, cy + size * 0.8); ctx.lineTo(cx - size * 0.5, cy); ctx.closePath(); ctx.fill(); ctx.shadowBlur = 0; } else if (icon === 'seed') { ctx.shadowColor = '#e8d5a3'; ctx.shadowBlur = 12; ctx.fillStyle = '#e8d5a3'; ctx.beginPath(); ctx.arc(cx, cy, size * 0.5, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(cx - size * 0.15, cy - size * 0.15, size * 0.15, 0, Math.PI * 2); ctx.fill(); } }
+  showCompletion() { this.completionScreen.classList.add('visible'); }
+  hideCompletion() { this.completionScreen.classList.remove('visible'); }
+  hideDialogue() { this.dialogueBox.classList.remove('visible'); if (this.dialogueTimer) clearTimeout(this.dialogueTimer); }
+}
+
+class Game {
+  constructor(canvas) {
+    this.canvas = canvas; this.renderer = new Renderer(canvas); this.input = new InputManager(canvas, this.renderer);
+    this.particles = new ParticleSystem(); this.hitbox = new HitboxEngine(); this.quest = new QuestSystem();
+    this.inventory = new InventorySystem(); this.hero = new Hero(0.5, 0.78); this.hud = new HUD();
+    this.objects = []; this.running = false; this.lastTime = 0; this.gameState = {};
+    this._setupCallbacks(); this._createObjects(); this._setupInput();
+   _setupCallbacks() {
+    this.inventory.onChange((items, selected) => { this.hud.updateInventory(items, selected); this.hero.heldItem = selected; });
+    this.hud.onItemSelect = (id) => { this.inventory.select(id); };
+    this.hud.onRestart = () => { this.restart(); };
+    this.quest.onTransition((oldState, newState) => { this._updateGameState(newState); });
+    window.addEventListener('resize', () => { this.renderer.resize(); });
+  }
+  _createObjects() {
+    this.objects = createSceneObjects(this.quest, this.inventory, this.hero, this.hud, this.particles);
+    for (const obj of this.objects) this.hitbox.register(obj);
+  }
+  _updateGameState(state) {
+    this.gameState = {
+      treeAlive: state === QuestState.TREE_GROWN || state === QuestState.PORTAL_OPEN || state === QuestState.COMPLETE,
+      capsuleOpen: state === QuestState.CAPSULE_OPENED || state === QuestState.SEED_FOUND || state === QuestState.TREE_PLANTED || state === QuestState.TREE_GROWN || state === QuestState.PORTAL_OPEN || state === QuestState.COMPLETE,
+      mushroomsHappy: state === QuestState.MUSHROOMS_HAPPY || state === QuestState.CRYSTAL_FOUND || state === QuestState.CAPSULE_OPENED || state === QuestState.SEED_FOUND || state === QuestState.TREE_PLANTED || state === QuestState.TREE_GROWN || state === QuestState.PORTAL_OPEN || state === QuestState.COMPLETE,
+      hasDew: this.inventory.has('dew'), hasCrystal: this.inventory.has('crystal'), hasSeed: this.inventory.has('seed'),
+      portalOpen: state === QuestState.PORTAL_OPEN || state === QuestState.COMPLETE
+    };
+  }
+  _setupInput() {
+    this.input.onTap((nx, ny) => {
+      if (this.quest.state === QuestState.COMPLETE) return;
+      const hit = this.hitbox.hitTest(nx, ny);
+      if (hit) {
+        const selectedItem = this.inventory.getSelected();
+        if (selectedItem && hit.onUseItem) { const used = hit.onUseItem(selectedItem); if (used) { this.inventory.select(null); return; } }
+        if (hit.onInteract) hit.onInteract();
+      } else { this.inventory.select(null); this.hero.walkTo(nx, ny); }
+    });
+    this.input.onMove((nx, ny) => { this.hitbox.setHighlight(nx, ny); const hit = this.hitbox.hitTest(nx, ny); this.canvas.style.cursor = hit ? 'pointer' : 'default'; });
+  }
+  start() { this.running = true; this.lastTime = performance.now(); this._updateGameState(this.quest.state); requestAnimationFrame((t) => this._loop(t)); }
+  _loop(time) {
+    if (!this.running) return;
+    const dt = Math.min(time - this.lastTime, 50); this.lastTime = time;
+    this.hero.update(dt, time); this.particles.update(); this._updateGameState(this.quest.state);
+    if (this.quest.state === QuestState.COMPLETE) this.hud.showCompletion();
+    this.renderer.render(null, this.hero, this.objects, this.gameState, time);
+    this.particles.draw(this.renderer.ctx, this.renderer);
+    requestAnimationFrame((t) => this._loop(t));
+  }
+  restart() {
+    this.quest.reset(); this.inventory.reset(); this.hero.reset(); this.particles.particles = []; this.hitbox.objects = [];
+    this.hud.hideCompletion(); this.hud.hideDialogue(); this._updateGameState(this.quest.state); this._createObjects();
+  }
+  destroy() { this.running = false; this.input.destroy(); }
+}
+
+(function init() {
+  const canvas = document.getElementById('game-canvas');
+  const loadingScreen = document.getElementById('loading-screen');
+  const loadingFill = document.getElementById('loading-fill');
+  let tg = null;
+  try {
+    if (window.Telegram && window.Telegram.WebApp) {
+      tg = window.Telegram.WebApp; tg.ready(); tg.expand(); tg.enableClosingConfirmation();
+      tg.setHeaderColor('#0a0a1a'); tg.setBackgroundColor('#0a0a1a');
+    }
+  } catch (e) { console.warn('Telegram WebApp API not available:', e); }
+  let progress = 0;
+  const loadSteps = [{ p: 15, t: 200 }, { p: 35, t: 300 }, { p: 55, t: 250 }, { p: 75, t: 300 }, { p: 90, t: 200 }, { p: 100, t: 300 }];
+  let stepIdx = 0;
+  function advanceLoad() {
+    if (stepIdx >= loadSteps.length) { setTimeout(() => { loadingScreen.classList.add('hidden'); startGame(); }, 400); return; }
+    const step = loadSteps[stepIdx]; progress = step.p; loadingFill.style.width = progress + '%'; stepIdx++; setTimeout(advanceLoad, step.t);
+  }
+  setTimeout(advanceLoad, 300);
+  function startGame() {
+    try {
+      const game = new Game(canvas); window.__game = game; game.start();
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) { game.running = false; } else { game.running = true; game.lastTime = performance.now(); requestAnimationFrame((t) => game._loop(t)); }
+      });
+      document.body.addEventListener('touchmove', (e) => { if (e.target === canvas) e.preventDefault(); }, { passive: false });
+    } catch (err) {
+      console.error('Game initialization failed:', err); loadingScreen.classList.remove('hidden');
+      loadingScreen.innerHTML = '<div style="color:#aabbee;font-family:sans-serif;text-align:center;padding:40px;"><div style="font-size:18px;margin-bottom:12px;">⚠️ Ошибка запуска</div><div style="font-size:13px;opacity:0.7;">' + err.message + '</div></div>';
+    }
+  }
+})();
+</script>
+</body>
+</html>
+
