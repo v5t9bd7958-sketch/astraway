@@ -254,7 +254,7 @@ class Game {
     this.particles = new ParticleSystem(); this.hitbox = new HitboxEngine(); this.quest = new QuestSystem();
     this.inventory = new InventorySystem(); this.hero = new Hero(0.5, 0.78); this.hud = new HUD();
     this.objects = []; this.running = false; this.lastTime = 0; this.gameState = {};
-    this._setupCallbacks(); this._createObjects(); this._setupInput();
+    this._setupCallbacks(); this._createObjects(); this._setupInput();  }
    _setupCallbacks() {
     this.inventory.onChange((items, selected) => { this.hud.updateInventory(items, selected); this.hero.heldItem = selected; });
     this.hud.onItemSelect = (id) => { this.inventory.select(id); };
