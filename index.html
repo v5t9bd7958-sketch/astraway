@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Лео — Приключение на дереве</title>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@8.1.0/dist/pixi.min.js"></script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: #0a0f0a;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        #game-container {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+        }
+        canvas { display: block; }
+        #ui-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
+        #quest-counter {
+            position: absolute; top: 20px; left: 50%; transform: translateX(-50%);
+            color: #e8d5a3; font-family: 'Georgia', serif; font-size: 18px;
+            text-shadow: 0 2px 8px rgba(0,0,0,0.8); letter-spacing: 2px;
+            background: rgba(10, 15, 10, 0.6); padding: 8px 24px;
+            border-radius: 20px; border: 1px solid rgba(232, 213, 163, 0.3);
+        }
+        #quest-counter span { color: #7cb342; font-weight: bold; }
+        #loading {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #0a0f0a; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 100;
+            transition: opacity 1s ease;
+        }
+        #loading-text {
+            color: #e8d5a3; font-family: 'Georgia', serif; font-size: 20px;
+            margin-top: 20px; letter-spacing: 3px;
+        }
+        .spinner {
+            width: 50px; height: 50px;
+            border: 3px solid rgba(232, 213, 163, 0.2);
+            border-top-color: #e8d5a3; border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #start-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 15, 10, 0.85);
+            display: flex; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 90;
+            opacity: 0; pointer-events: none; transition: opacity 0.5s;
+        }
+        #start-screen.active { opacity: 1; pointer-events: all; }
+        #start-btn {
+            background: linear-gradient(135deg, #5d4037, #3e2723);
+            color: #e8d5a3; border: 2px solid #8d6e63;
+            padding: 16px 48px; font-size: 22px;
+            font-family: 'Georgia', serif; border-radius: 30px;
+            cursor: pointer; letter-spacing: 2px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            transition: all 0.3s;
+        }
+        #start-btn:hover { transform: scale(1.05); box-shadow: 0 6px 30px rgba(232,213,163,0.2); }
+        #victory-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(10, 15, 10, 0.9);
+            display: none; flex-direction: column;
+            align-items: center; justify-content: center; z-index: 95;
+        }
+        #victory-screen h1 {
+            color: #e8d5a3; font-family: 'Georgia', serif; font-size: 36px;
+            margin-bottom: 20px; text-shadow: 0 2px 10px rgba(0,0,0,0.8);
+        }
+        #victory-screen p {
+            color: #a5d6a7; font-family: 'Georgia', serif; font-size: 18px;
+            margin-bottom: 30px;
+        }
+        #restart-btn {
+            background: linear-gradient(135deg, #2e7d32, #1b5e20);
+            color: #e8d5a3; border: 2px solid #66bb6a;
+            padding: 14px 40px; font-size: 18px;
+            font-family: 'Georgia', serif; border-radius: 25px;
+            cursor: pointer; letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <div id="loading-text">Загрузка мира Лео...</div>
+    </div>
+    <div id="start-screen" class="active">
+        <h2 style="color:#e8d5a3; font-family:Georgia,serif; font-size:28px; margin-bottom:30px; text-shadow:0 2px 10px rgba(0,0,0,0.8);">Лео — Приключение на дереве</h2>
+        <button id="start-btn">Начать игру</button>
+        <p style="color:#8d6e63; font-family:Georgia,serif; font-size:14px; margin-top:20px;">Найди и активируй все 7 предметов</p>
+    </div>
+    <div id="victory-screen">
+        <h1>Поздравляем!</h1>
+        <p>Вы нашли все 7 предметов!</p>
+        <button id="restart-btn">Играть снова</button>
+    </div>
+    <div id="game-container"></div>
+    <div id="ui-overlay">
+        <div id="quest-counter">Найдено: <span id="found-count">0</span> / 7</div>
+    </div>
+
+<script>
+// ============================================================
+// ЛЕО — ПРИКЛЮЧЕНИЕ НА ДЕРЕВЕ
+// Telegram Mini App | PixiJS 8 | WebGL
+// ============================================================
+
+const CONFIG = {
+    bgImage: './background.jpg',
+    heroImage: './character.jpg',
+    targetFPS: 60,
+    walkSpeed: 2.5,
+    runSpeed: 4.0,
+    acceleration: 0.08,
+    deceleration: 0.12,
+    turnSpeed: 0.15,
+    interactionDist: 60,
+    particleCount: 30,
+    ambientParticles: 50,
+    soundEnabled: true
+};
+
+// ============================================================
+// AUDIO ENGINE — Web Audio API
+// ============================================================
+
+class AudioEngine {
+    constructor() {
+        this.ctx = null;
+        this.masterGain = null;
+        this.bgmGain = null;
+        this.sfxGain = null;
+        this.initialized = false;
+        this.bgmOscillators = [];
+        this.footstepTimer = 0;
+    }
+
+    init() {
+        if (this.initialized) return;
+        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.6;
+        this.masterGain.connect(this.ctx.destination);
+        
+        this.bgmGain = this.ctx.createGain();
+        this.bgmGain.gain.value = 0.15;
+        this.bgmGain.connect(this.masterGain);
+        
+        this.sfxGain = this.ctx.createGain();
+        this.sfxGain.gain.value = 0.5;
+        this.sfxGain.connect(this.masterGain);
+        
+        this.initialized = true;
+        this.startBGM();
+    }
+
+    startBGM() {
+        if (!this.initialized) return;
+        const notes = [196.00, 220.00, 261.63, 293.66, 329.63, 392.00];
+        const playNote = (freq, time, duration, vol) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, time);
+            gain.gain.linearRampToValueAtTime(vol, time + 0.5);
+            gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+            osc.connect(gain);
+            gain.connect(this.bgmGain);
+            osc.start(time);
+            osc.stop(time + duration);
+            this.bgmOscillators.push(osc);
+        };
+
+        const schedule = () => {
+            if (!this.initialized) return;
+            const now = this.ctx.currentTime;
+            for (let i = 0; i < 8; i++) {
+                const note = notes[Math.floor(Math.random() * notes.length)];
+                const time = now + i * 2 + Math.random() * 0.5;
+                playNote(note, time, 3 + Math.random() * 2, 0.08 + Math.random() * 0.04);
+            }
+            setTimeout(schedule, 16000);
+        };
+        schedule();
+    }
+
+    playFootstep() {
+        if (!this.initialized) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        const filter = this.ctx.createBiquadFilter();
+        
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(80 + Math.random() * 40, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.1);
+        
+        filter.type = 'lowpass';
+        filter.frequency.value = 400;
+        
+        gain.gain.setValueAtTime(0.05, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        
+        osc.connect(filter);
+        filter.connect(gain);
+        gain.connect(this.sfxGain);
+        
+        osc.start(now);
+        osc.stop(now + 0.15);
+    }
+
+    playCoinSound() {
+        if (!this.initialized) return;
+        const now = this.ctx.currentTime;
+        [1200, 1800].forEach((freq, i) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, now + i * 0.05);
+            gain.gain.linearRampToValueAtTime(0.15, now + i * 0.05 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.4);
+            osc.connect(gain);
+            gain.connect(this.sfxGain);
+            osc.start(now + i * 0.05);
+            osc.stop(now + i * 0.05 + 0.5);
+        });
+    }
+
+    playSuccessSound() {
+        if (!this.initialized) return;
+        const now = this.ctx.currentTime;
+        const notes = [523.25, 659.25, 783.99, 1046.50];
+        notes.forEach((freq, i) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0, now + i * 0.12);
+            gain.gain.linearRampToValueAtTime(0.12, now + i * 0.12 + 0.05);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.12 + 0.6);
+            osc.connect(gain);
+            gain.connect(this.sfxGain);
+            osc.start(now + i * 0.12);
+            osc.stop(now + i * 0.12 + 0.7);
+        });
+    }
+
+    playAmbientChime() {
+        if (!this.initialized || Math.random() > 0.3) return;
+        const now = this.ctx.currentTime;
+        const freq = 800 + Math.random() * 600;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.03, now + 0.3);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 2 + Math.random());
+        osc.connect(gain);
+        gain.connect(this.bgmGain);
+        osc.start(now);
+        osc.stop(now + 3);
+    }
+}
+
+const audio = new AudioEngine();
+
+// ============================================================
+// GAME STATE
+// ============================================================
+
+const GameState = {
+    IDLE: 'idle',
+    WALKING: 'walking',
+    TURNING: 'turning',
+    INTERACTING: 'interacting',
+    CELEBRATING: 'celebrating'
+};
+
+const Emotion = {
+    IDLE: 'idle',
+    CURIOUS: 'curious',
+    SURPRISED: 'surprised',
+    HAPPY: 'happy',
+    CONCENTRATED: 'concentrated'
+};
+
+// ============================================================
+// PIXI APPLICATION
+// ============================================================
+
+const app = new PIXI.Application({
+    resizeTo: window,
+    backgroundColor: 0x0a0f0a,
+    antialias: true,
+    resolution: Math.min(window.devicePixelRatio, 2),
+    autoDensity: true,
+    powerPreference: 'high-performance'
+});
+
+document.getElementById('game-container').appendChild(app.view);
+
+// ============================================================
+// ASSET LOADING
+// ============================================================
+
+async function loadAssets() {
+    const manifest = {
+        bundles: [{
+            name: 'game',
+            assets: [
+                { alias: 'bg', src: CONFIG.bgImage },
+                { alias: 'hero', src: CONFIG.heroImage }
+            ]
+        }]
+    };
+    await PIXI.Assets.init({ manifest });
+    return await PIXI.Assets.loadBundle('game');
+}
+
+// ============================================================
+// NAVIGATION GRAPH — Waypoints on the tree branches
+// ============================================================
+
+class NavigationGraph {
+    constructor() {
+        this.nodes = [
+            { id: 'start', x: 0.50, y: 0.88, depth: 1.0, label: 'start' },
+            { id: 'branch_left_1', x: 0.35, y: 0.78, depth: 0.95, label: 'path' },
+            { id: 'branch_left_2', x: 0.22, y: 0.68, depth: 0.90, label: 'path' },
+            { id: 'branch_left_3', x: 0.15, y: 0.55, depth: 0.85, label: 'path' },
+            { id: 'branch_right_1', x: 0.65, y: 0.75, depth: 0.95, label: 'path' },
+            { id: 'branch_right_2', x: 0.78, y: 0.65, depth: 0.88, label: 'path' },
+            { id: 'branch_right_3', x: 0.85, y: 0.50, depth: 0.82, label: 'path' },
+            { id: 'center_1', x: 0.50, y: 0.70, depth: 0.92, label: 'path' },
+            { id: 'center_2', x: 0.50, y: 0.58, depth: 0.85, label: 'path' },
+            { id: 'center_3', x: 0.50, y: 0.45, depth: 0.78, label: 'path' },
+            { id: 'top_left', x: 0.30, y: 0.40, depth: 0.75, label: 'path' },
+            { id: 'top_right', x: 0.70, y: 0.38, depth: 0.72, label: 'path' },
+            { id: 'top_center', x: 0.50, y: 0.32, depth: 0.70, label: 'path' },
+            { id: 'item_1', x: 0.20, y: 0.52, depth: 0.84, label: 'item', itemId: 0 },
+            { id: 'item_2', x: 0.35, y: 0.42, depth: 0.76, label: 'item', itemId: 1 },
+            { id: 'item_3', x: 0.50, y: 0.35, depth: 0.70, label: 'item', itemId: 2 },
+            { id: 'item_4', x: 0.65, y: 0.40, depth: 0.74, label: 'item', itemId: 3 },
+            { id: 'item_5', x: 0.80, y: 0.48, depth: 0.80, label: 'item', itemId: 4 },
+            { id: 'item_6', x: 0.72, y: 0.62, depth: 0.86, label: 'item', itemId: 5 },
+            { id: 'item_7', x: 0.45, y: 0.65, depth: 0.88, label: 'item', itemId: 6 }
+        ];
+        
+        this.edges = [
+            ['start', 'branch_left_1'], ['start', 'branch_right_1'], ['start', 'center_1'],
+            ['branch_left_1', 'branch_left_2'], ['branch_left_2', 'branch_left_3'],
+            ['branch_left_3', 'item_1'], ['branch_left_3', 'top_left'],
+            ['branch_right_1', 'branch_right_2'], ['branch_right_2', 'branch_right_3'],
+            ['branch_right_3', 'item_5'], ['branch_right_3', 'top_right'],
+            ['center_1', 'center_2'], ['center_2', 'center_3'],
+            ['center_3', 'item_3'], ['center_3', 'top_center'],
+            ['center_2', 'branch_left_2'], ['center_2', 'branch_right_2'],
+            ['top_left', 'item_2'], ['top_right', 'item_4'],
+            ['top_center', 'item_3'], ['branch_right_2', 'item_6'],
+            ['center_1', 'item_7']
+        ];
+    }
+
+    getNode(id) { return this.nodes.find(n => n.id === id); }
+    
+    getNeighbors(nodeId) {
+        return this.edges
+            .filter(e => e[0] === nodeId || e[1] === nodeId)
+            .map(e => e[0] === nodeId ? e[1] : e[0]);
+    }
+
+    findPath(startId, targetId) {
+        const start = this.getNode(startId);
+        const target = this.getNode(targetId);
+        if (!start || !target) return null;
+
+        const openSet = [{ id: startId, g: 0, f: this.heuristic(start, target), parent: null }];
+        const closedSet = new Set();
+        const cameFrom = {};
+
+        while (openSet.length > 0) {
+            openSet.sort((a, b) => a.f - b.f);
+            const current = openSet.shift();
+            
+            if (current.id === targetId) {
+                const path = [];
+                let curr = current.id;
+                while (curr) {
+                    path.unshift(this.getNode(curr));
+                    curr = cameFrom[curr];
+                }
+                return path;
+            }
+
+            closedSet.add(current.id);
+            const neighbors = this.getNeighbors(current.id);
+            
+            for (const neighborId of neighbors) {
+                if (closedSet.has(neighborId)) continue;
+                const neighbor = this.getNode(neighborId);
+                const g = current.g + this.dist(this.getNode(current.id), neighbor);
+                const existing = openSet.find(n => n.id === neighborId);
+                
+                if (!existing || g < existing.g) {
+                    cameFrom[neighborId] = current.id;
+                    const f = g + this.heuristic(neighbor, target);
+                    if (!existing) {
+                        openSet.push({ id: neighborId, g, f, parent: current.id });
+                    } else {
+                        existing.g = g; existing.f = f;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    heuristic(a, b) {
+        return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+    }
+
+    dist(a, b) {
+        return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+    }
+
+    getNearestNode(x, y) {
+        let nearest = null; let minDist = Infinity;
+        for (const node of this.nodes) {
+            const d = Math.sqrt((node.x - x) ** 2 + (node.y - y) ** 2);
+            if (d < minDist) { minDist = d; nearest = node; }
+        }
+        return nearest;
+    }
+}
+
+// ============================================================
+// 2.5D CHARACTER RIG with transparency handling
+// ============================================================
+
+class CharacterRig {
+    constructor(texture) {
+        this.container = new PIXI.Container();
+        this.texture = texture;
+        this.baseScale = 1.0;
+        
+        // Create a sprite with black background removal
+        this.sprite = new PIXI.Sprite(texture);
+        this.sprite.anchor.set(0.5, 1);
+        
+        // Apply color matrix filter to remove black background
+        const colorMatrix = new PIXI.ColorMatrixFilter();
+        this.sprite.filters = [colorMatrix];
+        
+        // Adjust matrix to make dark pixels transparent
+        // This helps if character has black background
+        this.sprite.blendMode = 'normal';
+        
+        this.container.addChild(this.sprite);
+        
+        this.walkCycle = 0;
+        this.blinkTimer = 0;
+        this.nextBlink = 2 + Math.random() * 4;
+        this.emotionTimer = 0;
+        this.currentEmotion = Emotion.IDLE;
+        
+        // For 2.5D effect, we use scale and skew instead of full rig
+        // since we only have one image
+        this.targetSkewX = 0;
+        this.targetScaleY = 1;
+    }
+
+    update(delta, state, direction, walkProgress, emotion) {
+        const t = app.ticker.lastTime / 1000;
+        
+        if (state === GameState.WALKING) {
+            this.walkCycle += delta * 0.15;
+            const walkPhase = Math.sin(this.walkCycle);
+            
+            // Bobbing motion (подпрыгивание при ходьбе)
+            this.sprite.y = Math.abs(Math.sin(this.walkCycle * 2)) * -8;
+            
+            // Slight squash and stretch
+            this.targetScaleY = 1 + Math.sin(this.walkCycle * 2) * 0.03;
+            this.sprite.scale.y += (this.targetScaleY - this.sprite.scale.y) * 0.1;
+            this.sprite.scale.x = (1 / this.sprite.scale.y) * (direction === 'left' ? -1 : 1);
+            
+            // Slight tilt based on direction
+            this.targetSkewX = direction === 'left' ? 0.05 : direction === 'right' ? -0.05 : 0;
+            this.sprite.skew.x += (this.targetSkewX - this.sprite.skew.x) * 0.1;
+            
+        } else if (state === GameState.IDLE) {
+            // Breathing animation
+            const breath = Math.sin(t * 2) * 0.02;
+            this.sprite.scale.y = 1 + breath;
+            this.sprite.scale.x = (1 / (1 + breath)) * (this.sprite.scale.x < 0 ? -1 : 1);
+            this.sprite.y = breath * 15;
+            
+            this.sprite.skew.x += (0 - this.sprite.skew.x) * 0.05;
+        }
+        
+        // Emotion reactions through scale bumps
+        if (emotion === Emotion.HAPPY) {
+            this.sprite.scale.y = 1.1 + Math.sin(t * 10) * 0.05;
+            this.sprite.scale.x = (1 / this.sprite.scale.y) * (this.sprite.scale.x < 0 ? -1 : 1);
+        } else if (emotion === Emotion.SURPRISED) {
+            this.sprite.scale.y = 0.9;
+            this.sprite.scale.x = (1 / this.sprite.scale.y) * (this.sprite.scale.x < 0 ? -1 : 1) * 0.95;
+        } else if (emotion === Emotion.CONCENTRATED) {
+            this.sprite.skew.x = this.sprite.scale.x > 0 ? 0.03 : -0.03;
+        }
+        
+        this.blinkTimer += delta / 60;
+        if (this.blinkTimer > this.nextBlink) {
+            this.blinkTimer = 0;
+            this.nextBlink = 2 + Math.random() * 5;
+            this.animateBlink();
+        }
+        
+        const depthScale = this.baseScale;
+        const currentScaleX = this.container.scale.x;
+        this.container.scale.set(depthScale * (currentScaleX < 0 ? -1 : 1), depthScale);
+    }
+
+    animateBlink() {
+        const originalScaleY = this.sprite.scale.y;
+        let phase = 0;
+        const blinkAnim = () => {
+            phase += 0.25;
+            if (phase < Math.PI) {
+                const squash = 0.6 + 0.4 * Math.sin(phase);
+                this.sprite.scale.y = originalScaleY * squash;
+                requestAnimationFrame(blinkAnim);
+            } else {
+                this.sprite.scale.y = originalScaleY;
+            }
+        };
+        blinkAnim();
+    }
+
+    setScale(scale) {
+        const currentDir = this.container.scale.x < 0 ? -1 : 1;
+        this.baseScale = scale;
+        this.container.scale.set(scale * currentDir, scale);
+    }
+}
+
+// ============================================================
+// INTERACTIVE ITEMS
+// ============================================================
+
+class InteractiveItem {
+    constructor(id, x, y, navNodeId) {
+        this.id = id;
+        this.navNodeId = navNodeId;
+        this.collected = false;
+        
+        this.container = new PIXI.Container();
+        this.container.x = x;
+        this.container.y = y;
+        this.container.eventMode = 'static';
+        this.container.cursor = 'pointer';
+        
+        this.glow = new PIXI.Graphics();
+        this.drawGlow();
+        
+        this.core = new PIXI.Graphics();
+        this.drawCore();
+        
+        this.container.addChild(this.glow, this.core);
+        
+        this.hitbox = new PIXI.Graphics();
+        this.hitbox.beginFill(0x000000, 0.001);
+        this.hitbox.drawCircle(0, 0, 40);
+        this.hitbox.endFill();
+        this.container.addChild(this.hitbox);
+        
+        this.floatPhase = Math.random() * Math.PI * 2;
+        this.pulsePhase = Math.random() * Math.PI * 2;
+        
+        this.particles = [];
+        this.createParticles();
+    }
+
+    drawGlow() {
+        this.glow.clear();
+        const colors = [0xffd700, 0xff6b35, 0x4fc3f7, 0x81c784, 0xba68c8, 0xff8a65, 0x4dd0e1];
+        const color = colors[this.id % colors.length];
+        
+        for (let i = 3; i >= 1; i--) {
+            this.glow.beginFill(color, 0.08 / i);
+            this.glow.drawCircle(0, 0, 25 * i);
+            this.glow.endFill();
+        }
+    }
+
+    drawCore() {
+        this.core.clear();
+        const colors = [0xffd700, 0xff6b35, 0x4fc3f7, 0x81c784, 0xba68c8, 0xff8a65, 0x4dd0e1];
+        const color = colors[this.id % colors.length];
+        
+        this.core.beginFill(color, 0.9);
+        this.core.drawCircle(0, 0, 12);
+        this.core.endFill();
+        
+        this.core.beginFill(0xffffff, 0.6);
+        this.core.drawCircle(-4, -4, 4);
+        this.core.endFill();
+    }
+
+    createParticles() {
+        for (let i = 0; i < 6; i++) {
+            const p = new PIXI.Graphics();
+            p.beginFill(0xffffff, 0.6);
+            p.drawCircle(0, 0, 2);
+            p.endFill();
+            p.x = (Math.random() - 0.5) * 30;
+            p.y = (Math.random() - 0.5) * 30;
+            this.container.addChild(p);
+            this.particles.push({
+                sprite: p,
+                angle: Math.random() * Math.PI * 2,
+                speed: 0.5 + Math.random() * 1,
+                radius: 15 + Math.random() * 20
+            });
+        }
+    }
+
+    update(delta, time) {
+        if (this.collected) {
+            this.container.alpha *= 0.95;
+            this.container.scale.x *= 0.98;
+            this.container.scale.y *= 0.98;
+            return;
+        }
+        
+        this.floatPhase += delta * 0.02;
+        this.container.y += Math.sin(this.floatPhase) * 0.3;
+        
+        this.pulsePhase += delta * 0.03;
+        const pulse = 0.8 + Math.sin(this.pulsePhase) * 0.2;
+        this.glow.scale.set(pulse);
+        this.glow.alpha = 0.5 + Math.sin(this.pulsePhase) * 0.2;
+        
+        this.particles.forEach(p => {
+            p.angle += p.speed * delta * 0.02;
+            p.sprite.x = Math.cos(p.angle) * p.radius;
+            p.sprite.y = Math.sin(p.angle) * p.radius * 0.5 + Math.sin(time * 0.003 + p.angle) * 5;
+        });
+    }
+
+    playCollectAnimation() {
+        this.collected = true;
+        const flash = new PIXI.Graphics();
+        flash.beginFill(0xffffff, 0.8);
+        flash.drawCircle(0, 0, 50);
+        flash.endFill();
+        this.container.addChild(flash);
+        
+        let phase = 0;
+        const anim = () => {
+            phase += 0.1;
+            flash.alpha = 1 - phase;
+            flash.scale.set(1 + phase * 2);
+            if (phase < 1) requestAnimationFrame(anim);
+            else flash.destroy();
+        };
+        anim();
+    }
+}
+
+// ============================================================
+// ENVIRONMENT EFFECTS
+// ============================================================
+
+class EnvironmentEffects {
+    constructor(container, width, height) {
+        this.container = container;
+        this.width = width;
+        this.height = height;
+        
+        this.leaves = [];
+        this.createLeaves();
+        
+        this.fireflies = [];
+        this.createFireflies();
+        
+        this.lightRays = [];
+        this.createLightRays();
+    }
+
+    createLeaves() {
+        for (let i = 0; i < 15; i++) {
+            const leaf = new PIXI.Graphics();
+            const colors = [0x2e7d32, 0x388e3c, 0x43a047, 0x558b2f, 0x33691e];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            leaf.beginFill(color, 0.4);
+            leaf.drawEllipse(0, 0, 8 + Math.random() * 6, 4 + Math.random() * 3);
+            leaf.endFill();
+            
+            leaf.x = Math.random() * this.width;
+            leaf.y = Math.random() * this.height;
+            leaf.rotation = Math.random() * Math.PI * 2;
+            leaf.scale.set(0.5 + Math.random() * 0.5);
+            
+            this.container.addChild(leaf);
+            this.leaves.push({
+                sprite: leaf,
+                baseX: leaf.x,
+                baseY: leaf.y,
+                swaySpeed: 0.5 + Math.random() * 1,
+                swayAmount: 10 + Math.random() * 20,
+                fallSpeed: 0.2 + Math.random() * 0.5,
+                phase: Math.random() * Math.PI * 2
+            });
+        }
+    }
+
+    createFireflies() {
+        for (let i = 0; i < 25; i++) {
+            const ff = new PIXI.Graphics();
+            const brightness = 0.3 + Math.random() * 0.7;
+            ff.beginFill(0xffeb3b, brightness);
+            ff.drawCircle(0, 0, 1.5 + Math.random() * 2);
+            ff.endFill();
+            
+            ff.x = Math.random() * this.width;
+            ff.y = Math.random() * this.height;
+            
+            this.container.addChild(ff);
+            this.fireflies.push({
+                sprite: ff,
+                baseX: ff.x,
+                baseY: ff.y,
+                speedX: (Math.random() - 0.5) * 0.5,
+                speedY: (Math.random() - 0.5) * 0.3,
+                phase: Math.random() * Math.PI * 2,
+                blinkSpeed: 1 + Math.random() * 3
+            });
+        }
+    }
+
+    createLightRays() {
+        for (let i = 0; i < 3; i++) {
+            const ray = new PIXI.Graphics();
+            ray.beginFill(0xfff9c4, 0.03);
+            ray.drawPolygon([
+                -30, 0,
+                30, 0,
+                80, this.height,
+                -80, this.height
+            ]);
+            ray.endFill();
+            
+            ray.x = this.width * (0.2 + i * 0.3);
+            ray.y = -50;
+            
+            this.container.addChild(ray);
+            this.lightRays.push({
+                sprite: ray,
+                phase: i * 2,
+                swayAmount: 20 + Math.random() * 30
+            });
+        }
+    }
+
+    update(delta, time) {
+        this.leaves.forEach(leaf => {
+            leaf.phase += delta * 0.01 * leaf.swaySpeed;
+            leaf.sprite.x = leaf.baseX + Math.sin(leaf.phase) * leaf.swayAmount;
+            leaf.sprite.y += leaf.fallSpeed * delta * 0.1;
+            leaf.sprite.rotation += Math.sin(leaf.phase * 0.5) * 0.002 * delta;
+            
+            if (leaf.sprite.y > this.height + 20) {
+                leaf.sprite.y = -20;
+                leaf.baseY = -20;
+                leaf.baseX = Math.random() * this.width;
+            }
+            leaf.baseY = leaf.sprite.y;
+        });
+        
+        this.fireflies.forEach(ff => {
+            ff.phase += delta * 0.02;
+            ff.sprite.x += ff.speedX * delta * 0.1;
+            ff.sprite.y += ff.speedY * delta * 0.1;
+            
+            if (ff.sprite.x < 0 || ff.sprite.x > this.width) ff.speedX *= -1;
+            if (ff.sprite.y < 0 || ff.sprite.y > this.height) ff.speedY *= -1;
+            
+            ff.sprite.alpha = 0.3 + Math.sin(ff.phase * ff.blinkSpeed) * 0.3;
+        });
+        
+        this.lightRays.forEach(ray => {
+            ray.phase += delta * 0.005;
+            ray.sprite.x += Math.sin(ray.phase) * 0.1;
+            ray.sprite.alpha = 0.02 + Math.sin(ray.phase * 0.5) * 0.01;
+        });
+    }
+}
+
+// ============================================================
+// PARTICLE SYSTEM
+// ============================================================
+
+class ParticleSystem {
+    constructor(container) {
+        this.container = container;
+        this.particles = [];
+    }
+
+    emit(x, y, color, count = 10) {
+        for (let i = 0; i < count; i++) {
+            const p = new PIXI.Graphics();
+            p.beginFill(color, 0.8);
+            p.drawCircle(0, 0, 2 + Math.random() * 3);
+            p.endFill();
+            p.x = x;
+            p.y = y;
+            this.container.addChild(p);
+            
+            this.particles.push({
+                sprite: p,
+                vx: (Math.random() - 0.5) * 4,
+                vy: -2 - Math.random() * 4,
+                life: 1.0,
+                decay: 0.01 + Math.random() * 0.02
+            });
+        }
+    }
+
+    update(delta) {
+        for (let i = this.particles.length - 1; i >= 0; i--) {
+            const p = this.particles[i];
+            p.life -= p.decay * delta;
+            p.sprite.x += p.vx * delta * 0.1;
+            p.sprite.y += p.vy * delta * 0.1;
+            p.vy += 0.1 * delta * 0.1;
+            p.sprite.alpha = p.life;
+            p.sprite.scale.set(p.life);
+            
+            if (p.life <= 0) {
+                p.sprite.destroy();
+                this.particles.splice(i, 1);
+            }
+        }
+    }
+}
+
+// ============================================================
+// MAIN GAME CLASS
+// ============================================================
+
+class Game {
+    constructor() {
+        this.state = GameState.IDLE;
+        this.emotion = Emotion.IDLE;
+        this.heroPos = { x: 0, y: 0 };
+        this.heroTarget = null;
+        this.heroDirection = null;
+        this.currentPath = [];
+        this.pathIndex = 0;
+        this.velocity = { x: 0, y: 0 };
+        this.speed = 0;
+        this.targetSpeed = 0;
+        this.foundItems = 0;
+        this.totalItems = 7;
+        this.items = [];
+        this.nav = new NavigationGraph();
+        this.particles = null;
+        this.envEffects = null;
+        this.heroRig = null;
+        this.bgSprite = null;
+        this.heroContainer = null;
+        this.gameLayer = null;
+        this.uiLayer = null;
+        this.currentNavNode = 'start';
+        this.footstepPlayed = false;
+    }
+
+    async init() {
+        const assets = await loadAssets();
+        
+        this.gameLayer = new PIXI.Container();
+        this.uiLayer = new PIXI.Container();
+        app.stage.addChild(this.gameLayer, this.uiLayer);
+        
+        this.setupBackground(assets.bg);
+        this.envEffects = new EnvironmentEffects(this.gameLayer, app.screen.width, app.screen.height);
+        this.particles = new ParticleSystem(this.gameLayer);
+        this.setupNavigationVisuals();
+        this.setupItems();
+        this.setupHero(assets.hero);
+        this.setupInteraction();
+        this.updateQuestCounter();
+        
+        document.getElementById('loading').style.opacity = '0';
+        setTimeout(() => {
+            document.getElementById('loading').style.display = 'none';
+        }, 1000);
+        
+        document.getElementById('start-btn').addEventListener('click', () => {
+            audio.init();
+            document.getElementById('start-screen').classList.remove('active');
+            this.state = GameState.IDLE;
+        });
+        
+        document.getElementById('restart-btn').addEventListener('click', () => {
+            this.restart();
+        });
+        
+        app.ticker.add(this.update.bind(this));
+        window.addEventListener('resize', this.onResize.bind(this));
+    }
+
+    setupBackground(bgTexture) {
+        this.bgSprite = new PIXI.Sprite(bgTexture);
+        this.bgSprite.anchor.set(0.5);
+        this.fitBackground();
+        this.gameLayer.addChild(this.bgSprite);
+    }
+
+    fitBackground() {
+        const screenW = app.screen.width;
+        const screenH = app.screen.height;
+        const bgW = this.bgSprite.texture.width;
+        const bgH = this.bgSprite.texture.height;
+        
+        const scaleX = screenW / bgW;
+        const scaleY = screenH / bgH;
+        const scale = Math.max(scaleX, scaleY);
+        
+        this.bgSprite.scale.set(scale);
+        this.bgSprite.x = screenW / 2;
+        this.bgSprite.y = screenH / 2;
+    }
+
+    setupNavigationVisuals() {
+        this.nav.nodes.forEach(node => {
+            if (node.label === 'path' || node.label === 'item') {
+                const zone = new PIXI.Graphics();
+                zone.beginFill(0x000000, 0.001);
+                zone.drawCircle(0, 0, 30);
+                zone.endFill();
+                zone.x = node.x * app.screen.width;
+                zone.y = node.y * app.screen.height;
+                zone.eventMode = 'static';
+                zone.cursor = 'pointer';
+                
+                zone.on('pointertap', () => {
+                    if (this.state !== GameState.INTERACTING && this.state !== GameState.CELEBRATING) {
+                        this.moveToNode(node.id);
+                    }
+                });
+                
+                this.gameLayer.addChild(zone);
+            }
+        });
+    }
+
+    setupItems() {
+        const itemNodes = this.nav.nodes.filter(n => n.label === 'item');
+        
+        itemNodes.forEach((node, idx) => {
+            const x = node.x * app.screen.width;
+            const y = node.y * app.screen.height;
+            const item = new InteractiveItem(idx, x, y, node.id);
+            this.items.push(item);
+            this.gameLayer.addChild(item.container);
+        });
+    }
+
+    setupHero(heroTexture) {
+        this.heroContainer = new PIXI.Container();
+        
+        this.heroRig = new CharacterRig(heroTexture);
+        this.heroContainer.addChild(this.heroRig.container);
+        
+        const startNode = this.nav.getNode('start');
+        this.heroPos = {
+            x: startNode.x * app.screen.width,
+            y: startNode.y * app.screen.height
+        };
+        this.heroContainer.x = this.heroPos.x;
+        this.heroContainer.y = this.heroPos.y;
+        
+        this.heroRig.setScale(0.25);
+        
+        this.gameLayer.addChild(this.heroContainer);
+    }
+
+    setupInteraction() {
+        const bg = new PIXI.Graphics();
+        bg.beginFill(0x000000, 0.001);
+        bg.drawRect(0, 0, app.screen.width, app.screen.height);
+        bg.endFill();
+        bg.eventMode = 'static';
+        this.gameLayer.addChildAt(bg, 1);
+        
+        bg.on('pointertap', (e) => {
+            if (this.state === GameState.INTERACTING || this.state === GameState.CELEBRATING) return;
+            
+            const localPos = e.data.getLocalPosition(this.gameLayer);
+            const relX = localPos.x / app.screen.width;
+            const relY = localPos.y / app.screen.height;
+            
+            const nearest = this.nav.getNearestNode(relX, relY);
+            if (nearest) {
+                this.moveToNode(nearest.id);
+            }
+        });
+    }
+
+    moveToNode(targetNodeId) {
+        const path = this.nav.findPath(this.currentNavNode, targetNodeId);
+        if (!path || path.length < 2) return;
+        
+        this.currentPath = path;
+        this.pathIndex = 1;
+        this.state = GameState.WALKING;
+        this.targetSpeed = CONFIG.walkSpeed;
+        
+        const nextNode = path[1];
+        const currentNode = path[0];
+        this.heroDirection = nextNode.x > currentNode.x ? 'right' : nextNode.x < currentNode.x ? 'left' : null;
+    }
+
+    update(delta) {
+        const time = app.ticker.lastTime;
+        
+        if (this.envEffects) this.envEffects.update(delta, time);
+        if (this.particles) this.particles.update(delta);
+        this.items.forEach(item => item.update(delta, time));
+        this.updateHero(delta);
+        
+        if (Math.random() < 0.001) audio.playAmbientChime();
+    }
+
+    updateHero(delta) {
+        if (!this.heroRig) return;
+        
+        if (this.state === GameState.WALKING && this.currentPath && this.pathIndex < this.currentPath.length) {
+            const target = this.currentPath[this.pathIndex];
+            const tx = target.x * app.screen.width;
+            const ty = target.y * app.screen.height;
+            
+            const dx = tx - this.heroPos.x;
+            const dy = ty - this.heroPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist < 5) {
+                this.currentNavNode = target.id;
+                this.pathIndex++;
+                
+                if (this.pathIndex >= this.currentPath.length) {
+                    this.arriveAtTarget(target);
+                    return;
+                } else {
+                    const next = this.currentPath[this.pathIndex];
+                    this.heroDirection = next.x > target.x ? 'right' : next.x < target.x ? 'left' : null;
+                }
+            } else {
+                const dirX = dx / dist;
+                const dirY = dy / dist;
+                
+                this.speed += (this.targetSpeed - this.speed) * CONFIG.acceleration;
+                
+                const slowDownDist = 80;
+                if (dist < slowDownDist) {
+                    this.speed *= (dist / slowDownDist);
+                }
+                
+                this.velocity.x = dirX * this.speed;
+                this.velocity.y = dirY * this.speed;
+                
+                this.heroPos.x += this.velocity.x * delta;
+                this.heroPos.y += this.velocity.y * delta;
+                
+                this.heroRig.walkCycle += delta * 0.15;
+                if (Math.sin(this.heroRig.walkCycle) > 0.8 && !this.footstepPlayed) {
+                    audio.playFootstep();
+                    this.footstepPlayed = true;
+                } else if (Math.sin(this.heroRig.walkCycle) < -0.8) {
+                    this.footstepPlayed = false;
+                }
+            }
+        } else if (this.state === GameState.WALKING) {
+            this.state = GameState.IDLE;
+            this.speed = 0;
+            this.velocity.x = 0;
+            this.velocity.y = 0;
+        }
+        
+        this.heroContainer.x = this.heroPos.x;
+        this.heroContainer.y = this.heroPos.y;
+        
+        const depthY = this.heroPos.y / app.screen.height;
+        const depthScale = 0.2 + (1 - depthY) * 0.15;
+        this.heroRig.setScale(0.22 + depthScale);
+        
+        if (this.heroDirection === 'left') {
+            this.heroRig.container.scale.x = -Math.abs(this.heroRig.container.scale.x);
+        } else if (this.heroDirection === 'right') {
+            this.heroRig.container.scale.x = Math.abs(this.heroRig.container.scale.x);
+        }
+        
+        this.heroRig.update(delta, this.state, this.heroDirection, 0, this.emotion);
+    }
+
+    arriveAtTarget(node) {
+        this.state = GameState.IDLE;
+        this.speed = 0;
+        this.velocity.x = 0;
+        this.velocity.y = 0;
+        
+        if (node.label === 'item') {
+            const item = this.items.find(i => i.navNodeId === node.id);
+            if (item && !item.collected) {
+                this.interactWithItem(item);
+            }
+        }
+    }
+
+    async interactWithItem(item) {
+        this.state = GameState.INTERACTING;
+        this.emotion = Emotion.CONCENTRATED;
+        
+        const dx = item.container.x - this.heroPos.x;
+        this.heroDirection = dx > 0 ? 'right' : 'left';
+        
+        await this.wait(400);
+        
+        this.emotion = Emotion.SURPRISED;
+        await this.wait(300);
+        
+        item.playCollectAnimation();
+        audio.playCoinSound();
+        this.particles.emit(item.container.x, item.container.y, 0xffd700, 20);
+        
+        this.emotion = Emotion.HAPPY;
+        audio.playSuccessSound();
+        
+        this.foundItems++;
+        this.updateQuestCounter();
+        
+        await this.wait(1000);
+        
+        this.emotion = Emotion.IDLE;
+        this.state = GameState.IDLE;
+        
+        if (this.foundItems >= this.totalItems) {
+            this.victory();
+        }
+    }
+
+    wait(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    updateQuestCounter() {
+        document.getElementById('found-count').textContent = this.foundItems;
+    }
+
+    victory() {
+        setTimeout(() => {
+            document.getElementById('victory-screen').style.display = 'flex';
+        }, 500);
+    }
+
+    restart() {
+        this.foundItems = 0;
+        this.updateQuestCounter();
+        this.items.forEach(item => {
+            item.collected = false;
+            item.container.alpha = 1;
+            item.container.scale.set(1);
+        });
+        
+        const startNode = this.nav.getNode('start');
+        this.heroPos = {
+            x: startNode.x * app.screen.width,
+            y: startNode.y * app.screen.height
+        };
+        this.currentNavNode = 'start';
+        this.state = GameState.IDLE;
+        this.emotion = Emotion.IDLE;
+        
+        document.getElementById('victory-screen').style.display = 'none';
+    }
+
+    onResize() {
+        if (this.bgSprite) this.fitBackground();
+        
+        this.items.forEach((item, idx) => {
+            const node = this.nav.nodes.find(n => n.label === 'item' && n.itemId === idx);
+            if (node) {
+                item.container.x = node.x * app.screen.width;
+                item.container.y = node.y * app.screen.height;
+            }
+        });
+        
+        const current = this.nav.getNode(this.currentNavNode);
+        if (current && this.state === GameState.IDLE) {
+            this.heroPos.x = current.x * app.screen.width;
+            this.heroPos.y = current.y * app.screen.height;
+        }
+    }
+}
+
+// ============================================================
+// INITIALIZATION
+// ============================================================
+
+const game = new Game();
+game.init().catch(err => {
+    console.error('Game init failed:', err);
+    document.getElementById('loading-text').textContent = 'Ошибка загрузки. Обновите страницу.';
+});
+
+if (window.Telegram && Telegram.WebApp) {
+    Telegram.WebApp.ready();
+    Telegram.WebApp.expand();
+}
+</script>
+</body>
+</html>
