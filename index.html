@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Samorost Style Telegram Mini App</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #050705;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+        #game-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        canvas {
+            display: block;
+        }
+        #ui-overlay {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            right: 16px;
+            pointer-events: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+        }
+        .quest-card {
+            background: rgba(15, 20, 12, 0.85);
+            border: 1px solid rgba(160, 190, 110, 0.35);
+            color: #e2eec0;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            backdrop-filter: blur(6px);
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+        #audio-toggle {
+            pointer-events: auto;
+            background: rgba(15, 20, 12, 0.85);
+            border: 1px solid rgba(160, 190, 110, 0.35);
+            color: #e2eec0;
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            backdrop-filter: blur(6px);
+            font-size: 16px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+    </style>
+    <!-- Telegram Mini App SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- PixiJS v8 GPU Renderer -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.6.6/pixi.min.js"></script>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui-overlay">
+        <div class="quest-card">НАЙДЕНО: <span id="progress-text">0</span> / 7</div>
+        <div id="audio-toggle">🔊</div>
+    </div>
+</div>
+
+<script>
+// ============================================================================
+// 1. СВЯЗКА ПУТЕЙ К КАРТИНКАМ
+// ============================================================================
+const ASSETS_PATH = {
+    bg: './IMG_2083.jpeg',
+    hero: './HEIF.jpeg'
+};
+
+// Telegram WebApp Initialization
+const tg = window.Telegram?.WebApp;
+if (tg) {
+    tg.ready();
+    tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor('#050705');
+    if (tg.setBackgroundColor) tg.setBackgroundColor('#050705');
+}
+
+// ============================================================================
+// 2. АУДИОДВИЖОК (WEB AUDIO API - ШАГИ, ЗВОН МОНЕТ, АМБИЕНТ)
+// ============================================================================
+class AudioEngine {
+    constructor() {
+        this.ctx = null;
+        this.muted = false;
+        this.isBgPlaying = false;
+        this.bgTimer = null;
+    }
+
+    init() {
+        if (this.ctx) return;
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioCtx();
+    }
+
+    resume() {
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+    }
+
+    playFootstep() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(110 + Math.random() * 25, now);
+        osc.frequency.exponentialRampToValueAtTime(25, now + 0.07);
+
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 0.07);
+    }
+
+    playCoinSound() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+
+        const playTone = (freq, start, duration) => {
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq, start);
+
+            gain.gain.setValueAtTime(0.18, start);
+            gain.gain.exponentialRampToValueAtTime(0.001, start + duration);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(start);
+            osc.stop(start + duration);
+        };
+
+        playTone(987.77, now, 0.12);        // B5
+        playTone(1318.51, now + 0.09, 0.35); // E6
+    }
+
+    startAmbient() {
+        if (this.isBgPlaying || !this.ctx) return;
+        this.isBgPlaying = true;
+        const scale = [220.00, 261.63, 293.66, 329.63, 392.00, 440.00];
+
+        const loop = () => {
+            if (this.muted || !this.isBgPlaying) return;
+            const freq = scale[Math.floor(Math.random() * scale.length)];
+            const now = this.ctx.currentTime;
+
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(freq / 2, now);
+
+            gain.gain.setValueAtTime(0.001, now);
+            gain.gain.linearRampToValueAtTime(0.03, now + 1.5);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + 4.5);
+
+            osc.connect(gain);
+            gain.connect(this.ctx.destination);
+
+            osc.start(now);
+            osc.stop(now + 4.6);
+
+            this.bgTimer = setTimeout(loop, 2500 + Math.random() * 3000);
+        };
+        loop();
+    }
+}
+
+const audio = new AudioEngine();
+
+document.getElementById('audio-toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    audio.init();
+    audio.resume();
+    audio.startAmbient();
+    audio.muted = !audio.muted;
+    document.getElementById('audio-toggle').innerText = audio.muted ? '🔇' : '🔊';
+});
+
+// ============================================================================
+// 3. ТОПОЛОГИЯ ДЕРЕВА (NAVIGATION GRAPH & OBJECT HITBOXES)
+// Нормализованные координаты (0.0 - 1.0) под ориентацию экрана
+// ============================================================================
+const NAV_GRAPH = {
+    nodes: {
+        'bottom_left':  { x: 0.20, y: 0.88, depth: 1.15 },
+        'bridge_start': { x: 0.38, y: 0.82, depth: 1.05 },
+        'chest_node':   { x: 0.35, y: 0.76, depth: 1.00 },
+        'door_node':    { x: 0.30, y: 0.52, depth: 0.85 },
+        'top_left':     { x: 0.26, y: 0.28, depth: 0.70 },
+        'owl_node':      { x: 0.32, y: 0.18, depth: 0.65 },
+        'pipe_mid':     { x: 0.78, y: 0.52, depth: 0.88 },
+        'altar_node':   { x: 0.65, y: 0.85, depth: 1.10 }
+    },
+    edges: [
+        ['bottom_left', 'bridge_start'],
+        ['bridge_start', 'chest_node'],
+        ['bridge_start', 'door_node'],
+        ['door_node', 'top_left'],
+        ['top_left', 'owl_node'],
+        ['bridge_start', 'pipe_mid'],
+        ['pipe_mid', 'altar_node']
+    ]
+};
+
+const QUEST_OBJECTS = [
+    { id: 'lantern', name: 'Фонарь', node: 'bottom_left', hit: { x: 0.20, y: 0.88, r: 0.08 } },
+    { id: 'chest',   name: 'Сундук', node: 'chest_node',  hit: { x: 0.35, y: 0.76, r: 0.08 } },
+    { id: 'door',    name: 'Дверь',  node: 'door_node',   hit: { x: 0.30, y: 0.52, r: 0.09 } },
+    { id: 'sphere',  name: 'Шар',    node: 'top_left',    hit: { x: 0.26, y: 0.28, r: 0.08 } },
+    { id: 'owl',     name: 'Совенок',node: 'owl_node',     hit: { x: 0.32, y: 0.18, r: 0.08 } },
+    { id: 'pipe',    name: 'Труба',  node: 'pipe_mid',    hit: { x: 0.78, y: 0.52, r: 0.09 } },
+    { id: 'altar',   name: 'Алтарь', node: 'altar_node',   hit: { x: 0.65, y: 0.85, r: 0.09 } }
+];
+
+// Алгоритм Дейкстры для точности маршрута
+function getPath(startKey, targetKey) {
+    const dist = {};
+    const prev = {};
+    const nodes = Object.keys(NAV_GRAPH.nodes);
+
+    nodes.forEach(n => { dist[n] = Infinity; prev[n] = null; });
+    dist[startKey] = 0;
+
+    const unvisited = new Set(nodes);
+
+    while (unvisited.size > 0) {
+        let curr = null;
+        let minDist = Infinity;
+        unvisited.forEach(n => {
+            if (dist[n] < minDist) { minDist = dist[n]; curr = n; }
+        });
+
+        if (!curr || curr === targetKey) break;
+        unvisited.delete(curr);
+
+        NAV_GRAPH.edges.forEach(([u, v]) => {
+            let neighbor = null;
+            if (u === curr) neighbor = v;
+            if (v === curr) neighbor = u;
+
+            if (neighbor && unvisited.has(neighbor)) {
+                const p1 = NAV_GRAPH.nodes[curr];
+                const p2 = NAV_GRAPH.nodes[neighbor];
+                const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+                const alt = dist[curr] + d;
+                if (alt < dist[neighbor]) {
+                    dist[neighbor] = alt;
+                    prev[neighbor] = curr;
+                }
+            }
+        });
+    }
+
+    const path = [];
+    let u = targetKey;
+    while (u) { path.unshift(u); u = prev[u]; }
+    return path[0] === startKey ? path : [startKey];
+}
+
+// ============================================================================
+// 4. ДВИЖОК ИГРЫ И АНИМАЦИИ (PIXIJS)
+// ============================================================================
+let app, worldContainer;
+let bgSprite, heroContainer, heroSprite;
+let activeNodeKey = 'bridge_start';
+let isMoving = false;
+let currentPath = [];
+let pathIndex = 0;
+let pendingTargetObject = null;
+
+let completedObjects = new Set();
+let globalTime = 0;
+let sceneBaseWidth = 1000;
+let sceneBaseHeight = 1500;
+
+// Состояние 2.5D анимации героя
+let heroState = {
+    walkCycle: 0,
+    facingRight: true,
+    scaleFactor: 1,
+    emotion: 'IDLE',
+    emotionTimer: 0
+};
+
+async function initGame() {
+    app = new PIXI.Application();
+    await app.init({
+        resizeTo: document.getElementById('game-container'),
+        backgroundColor: 0x050705,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
+        preference: 'webgl'
+    });
+
+    document.getElementById('game-container').appendChild(app.canvas);
+
+    worldContainer = new PIXI.Container();
+    app.stage.addChild(worldContainer);
+
+    // 1. Загрузка Фона
+    try {
+        const bgTexture = await PIXI.Assets.load(ASSETS_PATH.bg);
+        bgSprite = new PIXI.Sprite(bgTexture);
+        sceneBaseWidth = bgTexture.width || 1000;
+        sceneBaseHeight = bgTexture.height || 1500;
+    } catch(e) {
+        console.warn('Фон прогружается через резервный холст');
+        const canvas = document.createElement('canvas');
+        canvas.width = 1000; canvas.height = 1500;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#1c2417'; ctx.fillRect(0,0,1000,1500);
+        bgSprite = new PIXI.Sprite(PIXI.Texture.from(canvas));
+    }
+    worldContainer.addChild(bgSprite);
+
+    // 2. Создание Интерактивных Маркеров
+    QUEST_OBJECTS.forEach(obj => {
+        const c = new PIXI.Container();
+        const g = new PIXI.Graphics();
+        g.circle(0, 0, 22).fill({ color: 0xe2eec0, alpha: 0.25 }).stroke({ color: 0xffffff, width: 2, alpha: 0.8 });
+        c.addChild(g);
+        c.x = obj.hit.x * sceneBaseWidth;
+        c.y = obj.hit.y * sceneBaseHeight;
+        c.name = 'obj_' + obj.id;
+        worldContainer.addChild(c);
+    });
+
+    // 3. Загрузка Героя
+    heroContainer = new PIXI.Container();
+    
+    // Тень
+    const shadow = new PIXI.Graphics();
+    shadow.ellipse(0, 0, 24, 8).fill({ color: 0x000000, alpha: 0.45 });
+    heroContainer.addChild(shadow);
+
+    try {
+        const heroTexture = await PIXI.Assets.load(ASSETS_PATH.hero);
+        heroSprite = new PIXI.Sprite(heroTexture);
+        heroSprite.anchor.set(0.5, 0.95); // Точка контакта ног с веткой
+        
+        // Расчет корректного размера героя
+        const targetHeroHeight = sceneBaseHeight * 0.14; 
+        const baseScale = targetHeroHeight / heroSprite.height;
+        heroState.scaleFactor = baseScale;
+        heroSprite.scale.set(baseScale);
+    } catch(e) {
+        // Резервная отрисовка
+        const g = new PIXI.Graphics();
+        g.rect(-15, -60, 30, 60).fill(0x8a9071);
+        heroContainer.addChild(g);
+    }
+
+    if (heroSprite) heroContainer.addChild(heroSprite);
+
+    // Начальная позиция
+    const startPos = NAV_GRAPH.nodes[activeNodeKey];
+    heroContainer.x = startPos.x * sceneBaseWidth;
+    heroContainer.y = startPos.y * sceneBaseHeight;
+    worldContainer.addChild(heroContainer);
+
+    // Настройка Кликов
+    app.stage.eventMode = 'static';
+    app.stage.hitArea = app.screen;
+    app.stage.on('pointerdown', handleTap);
+
+    // Текстурный Цикл
+    app.ticker.add((t) => gameLoop(t.deltaTime));
+
+    window.addEventListener('resize', fitLayout);
+    fitLayout();
+}
+
+function handleTap(e) {
+    audio.init();
+    audio.resume();
+    audio.startAmbient();
+
+    const localPos = worldContainer.toLocal(e.global);
+    const normX = localPos.x / sceneBaseWidth;
+    const normY = localPos.y / sceneBaseHeight;
+
+    // 1. Проверка попадания в объект
+    let clickedObj = null;
+    for (const obj of QUEST_OBJECTS) {
+        const d = Math.hypot(normX - obj.hit.x, normY - obj.hit.y);
+        if (d <= obj.hit.r) {
+            clickedObj = obj;
+            break;
+        }
+    }
+
+    if (clickedObj) {
+        pendingTargetObject = clickedObj;
+        const route = getPath(activeNodeKey, clickedObj.node);
+        if (route.length > 1) {
+            currentPath = route;
+            pathIndex = 1;
+            isMoving = true;
+            heroState.emotion = 'WALKING';
+        } else {
+            triggerObjectInteraction(clickedObj);
+        }
+    } else {
+        // 2. Клик по веткам/навигации
+        let closestNode = null;
+        let minDist = Infinity;
+        Object.keys(NAV_GRAPH.nodes).forEach(key => {
+            const node = NAV_GRAPH.nodes[key];
+            const d = Math.hypot(normX - node.x, normY - node.y);
+            if (d < minDist) {
+                minDist = d;
+                closestNode = key;
+            }
+        });
+
+        if (closestNode && closestNode !== activeNodeKey) {
+            pendingTargetObject = null;
+            currentPath = getPath(activeNodeKey, closestNode);
+            pathIndex = 1;
+            isMoving = true;
+            heroState.emotion = 'WALKING';
+        }
+    }
+}
+
+function triggerObjectInteraction(obj) {
+    audio.playCoinSound();
+    heroState.emotion = 'HAPPY';
+    heroState.emotionTimer = 1.2;
+
+    if (!completedObjects.has(obj.id)) {
+        completedObjects.add(obj.id);
+        document.getElementById('progress-text').innerText = completedObjects.size;
+
+        if (tg?.HapticFeedback) {
+            tg.HapticFeedback.notificationOccurred('success');
+        }
+
+        // Анимация визуального отклика предмета
+        const marker = worldContainer.getChildByName('obj_' + obj.id);
+        if (marker) {
+            marker.alpha = 0.4;
+        }
+    }
+}
+
+function gameLoop(delta) {
+    globalTime += delta * 0.05;
+
+    // Плавное покачивание фона (динамика)
+    if (bgSprite) {
+        bgSprite.y = Math.sin(globalTime * 0.5) * 1.5;
+    }
+
+    // Движение Героя
+    if (isMoving && currentPath.length > 0) {
+        const targetKey = currentPath[pathIndex];
+        const targetNode = NAV_GRAPH.nodes[targetKey];
+
+        const targetX = targetNode.x * sceneBaseWidth;
+        const targetY = targetNode.y * sceneBaseHeight;
+
+        const dx = targetX - heroContainer.x;
+        const dy = targetY - heroContainer.y;
+        const dist = Math.hypot(dx, dy);
+
+        const moveSpeed = 3.2 * delta;
+
+        if (dist > moveSpeed) {
+            heroContainer.x += (dx / dist) * moveSpeed;
+            heroContainer.y += (dy / dist) * moveSpeed;
+
+            // Поворот персонажа (Facing)
+            if (Math.abs(dx) > 0.2 && heroSprite) {
+                heroState.facingRight = dx > 0;
+                heroSprite.scale.x = heroState.facingRight ? heroState.scaleFactor : -heroState.scaleFactor;
+            }
+
+            // Масштабирование по глубине (Depth)
+            const currentDepth = targetNode.depth;
+            const targetScale = heroState.scaleFactor * currentDepth;
+            heroSprite.scale.y = targetScale;
+
+            // Анимация шага (Procedural Sway)
+            heroState.walkCycle += delta * 0.3;
+            heroSprite.rotation = Math.sin(heroState.walkCycle) * 0.08;
+            heroSprite.y = -Math.abs(Math.sin(heroState.walkCycle)) * 6;
+
+            if (Math.abs(Math.sin(heroState.walkCycle)) > 0.92) {
+                audio.playFootstep();
+            }
+        } else {
+            // Достигли узла
+            heroContainer.x = targetX;
+            heroContainer.y = targetY;
+            activeNodeKey = targetKey;
+            pathIndex++;
+
+            if (pathIndex >= currentPath.length) {
+                isMoving = false;
+                heroState.emotion = 'IDLE';
+                if (heroSprite) {
+                    heroSprite.rotation = 0;
+                    heroSprite.y = 0;
+                }
+
+                if (pendingTargetObject) {
+                    triggerObjectInteraction(pendingTargetObject);
+                    pendingTargetObject = null;
+                }
+            }
+        }
+    } else if (heroState.emotion === 'HAPPY' && heroSprite) {
+        // Эмоция радости
+        heroState.emotionTimer -= delta * 0.02;
+        heroSprite.y = -Math.abs(Math.sin(globalTime * 8)) * 12;
+        heroSprite.rotation = Math.sin(globalTime * 6) * 0.1;
+
+        if (heroState.emotionTimer <= 0) {
+            heroState.emotion = 'IDLE';
+            heroSprite.y = 0;
+            heroSprite.rotation = 0;
+        }
+    } else if (heroSprite) {
+        // Анимация покоя (дыхание)
+        heroSprite.y = Math.sin(globalTime * 1.5) * 1.5;
+    }
+}
+
+function fitLayout() {
+    if (!app || !worldContainer) return;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+
+    const scale = Math.min(w / sceneBaseWidth, h / sceneBaseHeight);
+    worldContainer.scale.set(scale);
+    worldContainer.x = (w - sceneBaseWidth * scale) / 2;
+    worldContainer.y = (h - sceneBaseHeight * scale) / 2;
+}
+
+window.addEventListener('DOMContentLoaded', initGame);
+</script>
+</body>
+</html>
