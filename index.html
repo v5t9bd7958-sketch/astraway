@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Samorost Tree — Telegram Mini App</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; touch-action:none; user-select:none; -webkit-user-select:none; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#070b07; }
+  #game { display:block; width:100%; height:100%; }
+  #ui {
+    position:fixed; top: max(12px, env(safe-area-inset-top)); left:0; right:0;
+    text-align:center; color:#e8d5a3; font-family:system-ui,-apple-system,sans-serif;
+    font-size:14px; text-shadow:0 1px 4px #000; pointer-events:none; z-index:20; opacity:0.92;
+  }
+  #progress { font-size:13px; margin-top:3px; color:#a8c97a; }
+  #hint {
+    position:fixed; bottom: max(18px, env(safe-area-inset-bottom)); left:0; right:0;
+    text-align:center; color:#c8b88a; font-size:12px; opacity:0.7; pointer-events:none; z-index:20;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div>Найди и активируй все 7 предметов</div>
+  <div id="progress">0 / 7</div>
+</div>
+<div id="hint">Тапни по предмету на дереве</div>
+
+<script>
+/* ================================================================
+   SAMOROST-STYLE TREE QUEST — FULL PRODUCTION SINGLE FILE
+   ================================================================
+   ИСПРАВЛЕННЫЕ КРИТИЧЕСКИЕ БАГИ ПРЕДЫДУЩЕЙ ВЕРСИИ:
+   1. Полностью реализована звуковая система (фон + шаги + монеты)
+      с разблокировкой AudioContext по первому тапу.
+   2. Герой больше не статичная фотография в чёрном квадрате.
+      Чёрный фон программно убирается, добавлен procedural walk-cycle,
+      bobbing, squash, tilt, secondary motion рук.
+   3. Размер героя уменьшен примерно в 5 раз (12–16% высоты экрана).
+   4. Убраны дёргания и заклинивания — правильный delta-time,
+      acceleration/deceleration, плавный path-following.
+   5. Добавлена анимация тела, поворотов и реакции радости.
+   6. Предметы при активации увеличиваются + сияют ровно 3 секунды.
+   ================================================================ */
+
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  try { tg.setHeaderColor('#1a2a1a'); tg.setBackgroundColor('#070b07'); } catch(e){}
+}
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', { alpha: false });
+const progressEl = document.getElementById('progress');
+const hintEl = document.getElementById('hint');
+
+const bgImg = new Image();
+const heroSrc = new Image();
+let heroImg = null;
+let assetsReady = 0;
+
+function assetLoaded() {
+  assetsReady++;
+  if (assetsReady === 2) {
+    processHeroTransparency().then(() => init());
+  }
+}
+bgImg.onload = assetLoaded;
+heroSrc.onload = assetLoaded;
+bgImg.onerror = () => console.error('background.jpg not found');
+heroSrc.onerror = () => console.error('character.jpg not found');
+bgImg.src = 'background.jpg';
+heroSrc.src = 'character.jpg';
+
+function processHeroTransparency() {
+  return new Promise(resolve => {
+    const off = document.createElement('canvas');
+    off.width = heroSrc.width;
+    off.height = heroSrc.height;
+    const octx = off.getContext('2d');
+    octx.drawImage(heroSrc, 0, 0);
+    const imgData = octx.getImageData(0, 0, off.width, off.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i] < 28 && d[i+1] < 28 && d[i+2] < 28) {
+        d[i+3] = 0;
+      }
+    }
+    octx.putImageData(imgData, 0, 0);
+
+    let minX = off.width, minY = off.height, maxX = 0, maxY = 0;
+    for (let y = 0; y < off.height; y++) {
+      for (let x = 0; x < off.width; x++) {
+        if (d[(y * off.width + x) * 4 + 3] > 10) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const cw = Math.max(1, maxX - minX + 1);
+    const ch = Math.max(1, maxY - minY + 1);
+    const cropped = document.createElement('canvas');
+    cropped.width = cw;
+    cropped.height = ch;
+    cropped.getContext('2d').drawImage(off, minX, minY, cw, ch, 0, 0, cw, ch);
+    heroImg = cropped;
+    resolve();
+  });
+}
+
+const state = {
+  W: 0, H: 0,
+  scale: 1, offX: 0, offY: 0,
+  hero: {
+    x: 0.42, y: 0.80,
+    scale: 0.13,
+    dir: 1,
+    walkPhase: 0,
+    speed: 0,
+    maxSpeed: 0.00155,
+    accel: 0.00007,
+    state: 'idle',
+    happyTimer: 0,
+    bob: 0,
+    tilt: 0,
+    arm: 0,
+    squash: 1,
+    path: [],
+    pathIdx: 0,
+    lookAt: null
+  },
+  objects: [],
+  questDone: 0,
+  particles: [],
+  leaves: [],
+  lastTime: 0,
+  audio: {
+    ctx: null,
+    unlocked: false,
+    bgGain: null,
+    bgOsc: [],
+    stepLast: 0
+  }
+};
+
+function createObjects() {
+  state.objects = [
+    { id:1, name:'Дверь',     x:0.285, y:0.455, r:0.048, done:false, glow:0, scale:1 },
+    { id:2, name:'Фонарь',    x:0.175, y:0.605, r:0.038, done:false, glow:0, scale:1 },
+    { id:3, name:'Сундук',    x:0.375, y:0.715, r:0.042, done:false, glow:0, scale:1 },
+    { id:4, name:'Висячий',   x:0.715, y:0.535, r:0.038, done:false, glow:0, scale:1 },
+    { id:5, name:'Труба',     x:0.815, y:0.405, r:0.045, done:false, glow:0, scale:1 },
+    { id:6, name:'Гнездо',    x:0.575, y:0.775, r:0.038, done:false, glow:0, scale:1 },
+    { id:7, name:'Полка',     x:0.675, y:0.265, r:0.045, done:false, glow:0, scale:1 }
+  ];
+}
+
+const WAYPOINTS = [
+  {x:0.42,y:0.82},{x:0.36,y:0.76},{x:0.30,y:0.70},{x:0.24,y:0.63},
+  {x:0.20,y:0.58},{x:0.28,y:0.52},{x:0.285,y:0.46},
+  {x:0.34,y:0.58},{x:0.40,y:0.66},{x:0.375,y:0.72},
+  {x:0.48,y:0.74},{x:0.55,y:0.76},{x:0.575,y:0.78},
+  {x:0.62,y:0.68},{x:0.68,y:0.58},{x:0.715,y:0.54},
+  {x:0.76,y:0.48},{x:0.80,y:0.42},{x:0.815,y:0.41},
+  {x:0.72,y:0.38},{x:0.68,y:0.30},{x:0.675,y:0.27},
+  {x:0.58,y:0.42},{x:0.50,y:0.52},{x:0.45,y:0.60}
+];
+
+function findPath(fx, fy, tx, ty) {
+  const path = [];
+  let cx = fx, cy = fy;
+  const used = new Set();
+  for (let step = 0; step < 14; step++) {
+    let best = -1, bestD = 1e9;
+    for (let i = 0; i < WAYPOINTS.length; i++) {
+      if (used.has(i)) continue;
+      const w = WAYPOINTS[i];
+      const d = Math.hypot(w.x - cx, w.y - cy) + Math.hypot(w.x - tx, w.y - ty) * 0.55;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0) break;
+    used.add(best);
+    const w = WAYPOINTS[best];
+    path.push({x: w.x, y: w.y});
+    cx = w.x; cy = w.y;
+    if (Math.hypot(cx - tx, cy - ty) < 0.055) break;
+  }
+  path.push({x: tx, y: ty});
+  return path;
+}
+
+function ensureAudio() {
+  if (!state.audio.ctx) {
+    state.audio.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (state.audio.ctx.state === 'suspended') {
+    state.audio.ctx.resume();
+  }
+  if (!state.audio.unlocked) {
+    state.audio.unlocked = true;
+    startAmbient();
+  }
+}
+
+function startAmbient() {
+  const actx = state.audio.ctx;
+  const master = actx.createGain();
+  master.gain.value = 0.18;
+  master.connect(actx.destination);
+  state.audio.bgGain = master;
+
+  const freqs = [110, 164.81, 220];
+  freqs.forEach((f, i) => {
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.value = f;
+    g.gain.value = 0.07 - i * 0.015;
+    o.connect(g);
+    g.connect(master);
+    o.start();
+    state.audio.bgOsc.push(o);
+  });
+}
+
+function playFootstep() {
+  if (!state.audio.unlocked) return;
+  const actx = state.audio.ctx;
+  const now = actx.currentTime;
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  const f = actx.createBiquadFilter();
+  o.type = 'triangle';
+  o.frequency.value = 70 + Math.random() * 40;
+  f.type = 'lowpass';
+  f.frequency.value = 280;
+  g.gain.setValueAtTime(0.11, now);
+  g.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
+  o.connect(f); f.connect(g); g.connect(actx.destination);
+  o.start(now); o.stop(now + 0.12);
+}
+
+function playCoin() {
+  if (!state.audio.unlocked) return;
+  const actx = state.audio.ctx;
+  const now = actx.currentTime;
+  [880, 1320, 1760].forEach((freq, i) => {
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(freq, now + i * 0.04);
+    g.gain.setValueAtTime(0.14 - i * 0.03, now + i * 0.04);
+    g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.04 + 0.35);
+    o.connect(g); g.connect(actx.destination);
+    o.start(now + i * 0.04);
+    o.stop(now + i * 0.04 + 0.38);
+  });
+}
+
+function playHappy() {
+  if (!state.audio.unlocked) return;
+  const actx = state.audio.ctx;
+  const now = actx.currentTime;
+  [523.25, 659.25, 783.99].forEach((freq, i) => {
+    const o = actx.createOscillator();
+    const g = actx.createGain();
+    o.type = 'sine';
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.09, now + i * 0.07);
+    g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.07 + 0.28);
+    o.connect(g); g.connect(actx.destination);
+    o.start(now + i * 0.07);
+    o.stop(now + i * 0.07 + 0.3);
+  });
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  state.W = window.innerWidth;
+  state.H = window.innerHeight;
+  canvas.width = state.W * dpr;
+  canvas.height = state.H * dpr;
+  canvas.style.width = state.W + 'px';
+  canvas.style.height = state.H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const bgA = bgImg.width / bgImg.height;
+  const scA = state.W / state.H;
+  if (scA > bgA) {
+    state.scale = state.H / bgImg.height;
+    state.offX = (state.W - bgImg.width * state.scale) / 2;
+    state.offY = 0;
+  } else {
+    state.scale = state.W / bgImg.width;
+    state.offX = 0;
+    state.offY = (state.H - bgImg.height * state.scale) / 2;
+  }
+}
+
+function toScreen(nx, ny) {
+  return {
+    x: state.offX + nx * bgImg.width * state.scale,
+    y: state.offY + ny * bgImg.height * state.scale
+  };
+}
+function toNorm(sx, sy) {
+  return {
+    x: (sx - state.offX) / (bgImg.width * state.scale),
+    y: (sy - state.offY) / (bgImg.height * state.scale)
+  };
+}
+
+function updateHero(dt) {
+  const h = state.hero;
+
+  if (h.state === 'happy') {
+    h.happyTimer -= dt;
+    h.bob = Math.sin(performance.now() * 0.014) * 6;
+    h.tilt = Math.sin(performance.now() * 0.01) * 0.06;
+    h.arm = Math.sin(performance.now() * 0.012) * 0.25;
+    h.squash = 1 + Math.sin(performance.now() * 0.014) * 0.04;
+    if (h.happyTimer <= 0) {
+      h.state = 'idle';
+      h.bob = 0; h.tilt = 0; h.arm = 0; h.squash = 1;
+    }
+    return;
+  }
+
+  if (h.state === 'attention') return;
+
+  if (h.path.length && h.pathIdx < h.path.length) {
+    const target = h.path[h.pathIdx];
+    const dx = target.x - h.x;
+    const dy = target.y - h.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 0.011) {
+      h.pathIdx++;
+      if (h.pathIdx >= h.path.length) {
+        h.speed = 0;
+        h.state = 'idle';
+        h.walkPhase = 0;
+        if (h.lookAt && !h.lookAt.done) {
+          beginInteraction(h.lookAt);
+        }
+        return;
+      }
+    } else {
+      const desired = Math.min(h.maxSpeed, dist * 2.2);
+      if (h.speed < desired) h.speed = Math.min(desired, h.speed + h.accel * dt);
+      else h.speed = Math.max(desired * 0.4, h.speed - h.accel * 2.1 * dt);
+
+      const vx = (dx / dist) * h.speed * dt;
+      const vy = (dy / dist) * h.speed * dt;
+      h.x += vx;
+      h.y += vy;
+
+      if (Math.abs(dx) > 0.003) h.dir = dx > 0 ? 1 : -1;
+
+      h.state = 'walk';
+      h.walkPhase += h.speed * 58 * dt;
+      h.bob = Math.sin(h.walkPhase) * 4.5;
+      h.arm = Math.sin(h.walkPhase) * 0.22;
+      h.tilt = Math.sin(h.walkPhase * 0.5) * 0.035 * h.dir;
+      h.squash = 1 + Math.sin(h.walkPhase) * 0.035;
+
+      if (Math.sin(h.walkPhase) > 0.91 && Math.sin(h.walkPhase - h.speed * 58 * dt) <= 0.91) {
+        playFootstep();
+      }
+    }
+  } else {
+    h.speed *= 0.92;
+    h.bob *= 0.88;
+    h.arm *= 0.9;
+    h.tilt *= 0.9;
+    h.squash += (1 - h.squash) * 0.1;
+    if (h.state === 'walk') h.state = 'idle';
+  }
+
+  h.scale = 0.105 + (1 - h.y) * 0.055;
+}
+
+function beginInteraction(obj) {
+  const h = state.hero;
+  h.state = 'attention';
+  h.lookAt = obj;
+
+  setTimeout(() => {
+    if (obj.done) { h.state = 'idle'; return; }
+
+    obj.done = true;
+    obj.glow = 1;
+    obj.scale = 1;
+    state.questDone++;
+    progressEl.textContent = state.questDone + ' / 7';
+    playCoin();
+
+    const start = performance.now();
+    function glowAnim(now) {
+      const t = (now - start) / 3000;
+      if (t >= 1) {
+        obj.glow = 0;
+        obj.scale = 1;
+        return;
+      }
+      if (t < 0.25) obj.scale = 1 + t * 0.9;
+      else obj.scale = 1.22 - (t - 0.25) * 0.15;
+      obj.glow = 1 - t * 0.7;
+      requestAnimationFrame(glowAnim);
+    }
+    requestAnimationFrame(glowAnim);
+
+    h.state = 'happy';
+    h.happyTimer = 1300;
+    playHappy();
+    spawnSparkles(obj.x, obj.y);
+
+    h.lookAt = null;
+
+    if (state.questDone >= 7) {
+      setTimeout(() => {
+        if (tg) tg.showAlert('Квест пройден! Дерево ожило.');
+        else alert('Квест пройден! Дерево ожило.');
+      }, 1600);
+    }
+  }, 380);
+}
+
+function spawnSparkles(nx, ny) {
+  const s = toScreen(nx, ny);
+  for (let i = 0; i < 18; i++) {
+    state.particles.push({
+      x: s.x, y: s.y,
+      vx: (Math.random() - 0.5) * 4.2,
+      vy: -Math.random() * 5 - 1.5,
+      life: 1,
+      color: `hsl(${35 + Math.random()*50}, 75%, 65%)`
+    });
+  }
+}
+
+function onPointer(e) {
+  e.preventDefault();
+  ensureAudio();
+  if (hintEl) hintEl.style.opacity = '0';
+
+  const rect = canvas.getBoundingClientRect();
+  const sx = (e.clientX ?? e.touches?.[0]?.clientX) - rect.left;
+  const sy = (e.clientY ?? e.touches?.[0]?.clientY) - rect.top;
+  const n = toNorm(sx, sy);
+
+  let hit = null;
+  let bestD = 1e9;
+  for (const o of state.objects) {
+    if (o.done) continue;
+    const d = Math.hypot(o.x - n.x, o.y - n.y);
+    if (d < o.r && d < bestD) { bestD = d; hit = o; }
+  }
+
+  if (hit) {
+    const h = state.hero;
+    h.lookAt = hit;
+    h.path = findPath(h.x, h.y, hit.x, hit.y - 0.035);
+    h.pathIdx = 0;
+    h.state = 'walk';
+  }
+}
+
+canvas.addEventListener('pointerdown', onPointer, { passive: false });
+canvas.addEventListener('touchstart', onPointer, { passive: false });
+
+function updateFx(dt) {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const p = state.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.09;
+    p.life -= dt * 0.00115;
+    if (p.life <= 0) state.particles.splice(i, 1);
+  }
+
+  if (Math.random() < 0.018) {
+    state.leaves.push({
+      x: Math.random() * state.W,
+      y: -8,
+      vx: (Math.random() - 0.5) * 0.7,
+      vy: 0.55 + Math.random() * 0.7,
+      rot: Math.random() * Math.PI * 2,
+      life: 3.2
+    });
+  }
+  for (let i = state.leaves.length - 1; i >= 0; i--) {
+    const l = state.leaves[i];
+    l.x += l.vx + Math.sin(performance.now()*0.001 + i) * 0.15;
+    l.y += l.vy;
+    l.rot += 0.02;
+    l.life -= dt * 0.001;
+    if (l.life <= 0 || l.y > state.H + 20) state.leaves.splice(i, 1);
+  }
+}
+
+function draw() {
+  ctx.fillStyle = '#070b07';
+  ctx.fillRect(0, 0, state.W, state.H);
+
+  ctx.drawImage(bgImg, state.offX, state.offY, bgImg.width * state.scale, bgImg.height * state.scale);
+
+  const t = performance.now() * 0.0004;
+  ctx.save();
+  ctx.globalAlpha = 0.035 + Math.sin(t) * 0.015;
+  ctx.fillStyle = '#c8e0a0';
+  for (let i = 0; i < 5; i++) {
+    const lx = state.offX + (0.15 + i * 0.16) * bgImg.width * state.scale + Math.sin(t + i) * 10;
+    const ly = state.offY + 0.22 * bgImg.height * state.scale + Math.cos(t * 1.2 + i) * 6;
+    ctx.beginPath();
+    ctx.ellipse(lx, ly, 18, 7, Math.sin(t + i) * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  for (const o of state.objects) {
+    if (o.glow > 0.01 || o.scale > 1.01) {
+      const s = toScreen(o.x, o.y);
+      const baseR = o.r * bgImg.width * state.scale;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.scale(o.scale, o.scale);
+
+      if (o.glow > 0) {
+        const grd = ctx.createRadialGradient(0, 0, 2, 0, 0, baseR * 1.8);
+        grd.addColorStop(0, `rgba(255,220,120,${0.55 * o.glow})`);
+        grd.addColorStop(0.5, `rgba(255,180,60,${0.25 * o.glow})`);
+        grd.addColorStop(1, 'rgba(255,160,40,0)');
+        ctx.fillStyle = grd;
+        ctx.beginPath();
+        ctx.arc(0, 0, baseR * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (o.done) {
+        ctx.globalAlpha = 0.4;
+        ctx.fillStyle = '#a8c97a';
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    } else if (o.done) {
+      const s = toScreen(o.x, o.y);
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = '#a8c97a';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  for (const l of state.leaves) {
+    ctx.save();
+    ctx.translate(l.x, l.y);
+    ctx.rotate(l.rot);
+    ctx.globalAlpha = Math.min(1, l.life);
+    ctx.fillStyle = 'rgba(130,160,70,0.75)';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 5, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  for (const p of state.particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  drawHero();
+}
+
+function drawHero() {
+  if (!heroImg) return;
+  const h = state.hero;
+  const s = toScreen(h.x, h.y);
+
+  const targetH = state.H * h.scale;
+  const aspect = heroImg.width / heroImg.height;
+  const drawH = targetH;
+  const drawW = drawH * aspect;
+
+  ctx.save();
+  ctx.translate(s.x, s.y + h.bob);
+  ctx.rotate(h.tilt);
+  ctx.scale(h.dir, 1);
+  ctx.scale(1 / h.squash, h.squash);
+
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(0, 4, drawW * 0.28, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  ctx.drawImage(heroImg, -drawW / 2, -drawH + 6, drawW, drawH);
+
+  if (h.state === 'walk' || h.state === 'happy') {
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = '#7a5a3a';
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-drawW * 0.22, -drawH * 0.42);
+    ctx.quadraticCurveTo(-drawW * 0.38, -drawH * 0.28 + h.arm * 22, -drawW * 0.32, -drawH * 0.12);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(drawW * 0.22, -drawH * 0.42);
+    ctx.quadraticCurveTo(drawW * 0.38, -drawH * 0.28 - h.arm * 22, drawW * 0.32, -drawH * 0.12);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+function loop(now) {
+  const dt = Math.min(34, now - (state.lastTime || now));
+  state.lastTime = now;
+
+  updateHero(dt);
+  updateFx(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+function init() {
+  createObjects();
+  resize();
+  window.addEventListener('resize', resize);
+  state.hero.x = 0.42;
+  state.hero.y = 0.80;
+  requestAnimationFrame(loop);
+  if (tg) try { tg.MainButton.hide(); } catch(e){}
+}
+
+setTimeout(() => {
+  if (assetsReady < 2 && bgImg.complete) {
+    console.warn('Partial assets, starting...');
+    if (!heroImg && heroSrc.complete) {
+      processHeroTransparency().then(() => init());
+    }
+  }
+}, 4000);
+</script>
+</body>
+</html>
