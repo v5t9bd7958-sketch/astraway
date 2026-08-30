@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Samorost Mini App</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; touch-action: none; }
+        body, html { width: 100%; height: 100%; overflow: hidden; background-color: #0d0e0a; font-family: sans-serif; }
+        #game-container { position: relative; width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        canvas { display: block; }
+        #ui-overlay { position: absolute; top: 12px; left: 12px; right: 12px; pointer-events: none; display: flex; justify-content: space-between; z-index: 10; }
+        .quest-counter { background: rgba(20, 24, 16, 0.8); border: 1px solid rgba(140, 160, 100, 0.4); color: #d4e0b0; padding: 6px 14px; border-radius: 20px; font-size: 13px; }
+        #audio-btn { pointer-events: auto; background: rgba(20, 24, 16, 0.8); border: 1px solid rgba(140, 160, 100, 0.4); color: #d4e0b0; width: 34px; height: 34px; border-radius: 50%; display: flex; justify-content: center; align-items: center; cursor: pointer; }
+    </style>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/8.6.6/pixi.min.js"></script>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="ui-overlay">
+        <div class="quest-counter">НАЙДЕНО: <span id="progress-val">0</span> / 7</div>
+        <div id="audio-btn">🔊</div>
+    </div>
+</div>
+
+<script>
+// Точные названия твоих загруженных файлов
+const ASSETS = {
+    bg: './IMG_2083.jpeg',
+    hero: './HEIF.jpeg'
+};
+
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+class SoundController {
+    constructor() { this.ctx = null; this.muted = false; }
+    init() {
+        if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            this.ctx = new AudioCtx();
+        }
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+    }
+    playStep() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(120, now);
+        osc.frequency.exponentialRampToValueAtTime(30, now + 0.08);
+        gain.gain.setValueAtTime(0.15, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.start(now); osc.stop(now + 0.08);
+    }
+    playCoin() {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(987, now);
+        osc.frequency.setValueAtTime(1318, now + 0.08);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.start(now); osc.stop(now + 0.3);
+    }
+}
+
+const audio = new SoundController();
+
+document.getElementById('audio-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    audio.init();
+    audio.muted = !audio.muted;
+    document.getElementById('audio-btn').innerText = audio.muted ? '🔇' : '🔊';
+});
+
+let app, world, hero, bg;
+let progress = 0;
+
+async function start() {
+    app = new PIXI.Application();
+    await app.init({ resizeTo: document.getElementById('game-container'), backgroundColor: 0x0d0e0a });
+    document.getElementById('game-container').appendChild(app.canvas);
+
+    world = new PIXI.Container();
+    app.stage.addChild(world);
+
+    try {
+        const bgTexture = await PIXI.Assets.load(ASSETS.bg);
+        bg = new PIXI.Sprite(bgTexture);
+        world.addChild(bg);
+    } catch(e) {
+        console.log('Ошибка загрузки фона');
+    }
+
+    try {
+        const heroTexture = await PIXI.Assets.load(ASSETS.hero);
+        hero = new PIXI.Sprite(heroTexture);
+        hero.anchor.set(0.5, 1.0);
+        hero.scale.set(0.2); // Подгон масштаба героя под сцену
+        hero.x = app.screen.width / 2;
+        hero.y = app.screen.height / 2;
+        world.addChild(hero);
+    } catch(e) {
+        console.log('Ошибка загрузки героя');
+    }
+
+    app.stage.eventMode = 'static';
+    app.stage.hitArea = app.screen;
+    app.stage.on('pointerdown', (e) => {
+        audio.init();
+        audio.playStep();
+        
+        if (hero) {
+            hero.x = e.global.x;
+            hero.y = e.global.y;
+        }
+
+        progress = Math.min(7, progress + 1);
+        document.getElementById('progress-val').innerText = progress;
+        audio.playCoin();
+    });
+}
+
+window.addEventListener('DOMContentLoaded', start);
+</script>
+</body>
+</html>
