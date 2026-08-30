@@ -54,8 +54,8 @@ function onAsset() {
 }
 bgImg.onload = onAsset;
 heroImg.onload = onAsset;
-bgImg.onerror = () => console.error('background.jpg missing');
-heroImg.onerror = () => console.error('character.jpg missing');
+bgImg.onerror = () => console.error('background.jpg missing — положи файл рядом с index.html');
+heroImg.onerror = () => console.error('character.jpg missing — положи файл рядом с index.html');
 bgImg.src = 'background.jpg';
 heroImg.src = 'character.jpg';
 
@@ -63,16 +63,16 @@ heroImg.src = 'character.jpg';
 const state = {
   W: 0, H: 0, scale: 1, offsetX: 0, offsetY: 0,
   hero: {
-    x: 0.42, y: 0.78,          // normalized 0-1
+    x: 0.42, y: 0.78,
     targetX: 0.42, targetY: 0.78,
     scale: 0.38,
-    dir: 1,                     // 1 = right, -1 = left
+    dir: 1,
     facing: 'front',
     walkPhase: 0,
     speed: 0,
     maxSpeed: 0.0018,
     accel: 0.00008,
-    state: 'idle',              // idle | walk | interact | happy
+    state: 'idle',
     happyTimer: 0,
     bob: 0,
     tilt: 0,
@@ -89,8 +89,7 @@ const state = {
   audioCtx: null
 };
 
-/* ---------- 7 INTERACTIVE OBJECTS (calibrated on background) ---------- */
-/* Positions are relative (0-1). Hit radius also relative. */
+/* ---------- 7 INTERACTIVE OBJECTS ---------- */
 function createObjects() {
   state.objects = [
     { id:1, name:'Дверь',        x:0.28, y:0.48, r:0.055, done:false, anim:0, type:'door' },
@@ -103,32 +102,30 @@ function createObjects() {
   ];
 }
 
-/* ---------- NAVIGATION WAYPOINTS (по веткам, без галлюцинаций) ---------- */
-/* Простая сеть узлов. Герой ходит только по ним. */
+/* ---------- NAVIGATION WAYPOINTS ---------- */
 const WAYPOINTS = [
-  { x:0.42, y:0.82 }, // start
+  { x:0.42, y:0.82 },
   { x:0.35, y:0.75 },
   { x:0.28, y:0.68 },
-  { x:0.22, y:0.62 }, // near lantern
+  { x:0.22, y:0.62 },
   { x:0.30, y:0.55 },
-  { x:0.28, y:0.48 }, // door
+  { x:0.28, y:0.48 },
   { x:0.40, y:0.58 },
   { x:0.48, y:0.70 },
-  { x:0.38, y:0.72 }, // chest
+  { x:0.38, y:0.72 },
   { x:0.55, y:0.75 },
-  { x:0.58, y:0.78 }, // nest
+  { x:0.58, y:0.78 },
   { x:0.65, y:0.68 },
-  { x:0.72, y:0.55 }, // hang
+  { x:0.72, y:0.55 },
   { x:0.78, y:0.48 },
-  { x:0.82, y:0.42 }, // pipe
+  { x:0.82, y:0.42 },
   { x:0.70, y:0.38 },
-  { x:0.68, y:0.28 }, // shelf
+  { x:0.68, y:0.28 },
   { x:0.55, y:0.45 },
   { x:0.45, y:0.52 }
 ];
 
 function findPath(fromX, fromY, toX, toY) {
-  // Простой nearest-neighbour path (достаточно для одной сцены)
   const path = [];
   let cx = fromX, cy = fromY;
   const target = { x:toX, y:toY };
@@ -152,7 +149,7 @@ function findPath(fromX, fromY, toX, toY) {
   return path;
 }
 
-/* ---------- AUDIO (Web Audio — критично перепроверено) ---------- */
+/* ---------- AUDIO ---------- */
 function ensureAudio() {
   if (!state.audioCtx) {
     state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -162,48 +159,48 @@ function ensureAudio() {
 
 function playFootstep() {
   ensureAudio();
-  const ctx = state.audioCtx;
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
+  const actx = state.audioCtx;
+  const o = actx.createOscillator();
+  const g = actx.createGain();
   o.type = 'triangle';
   o.frequency.value = 90 + Math.random() * 30;
-  g.gain.setValueAtTime(0.08, ctx.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-  o.connect(g); g.connect(ctx.destination);
-  o.start(); o.stop(ctx.currentTime + 0.13);
+  g.gain.setValueAtTime(0.08, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.12);
+  o.connect(g); g.connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.13);
 }
 
 function playCoin() {
   ensureAudio();
-  const ctx = state.audioCtx;
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
+  const actx = state.audioCtx;
+  const o = actx.createOscillator();
+  const g = actx.createGain();
   o.type = 'sine';
-  o.frequency.setValueAtTime(880, ctx.currentTime);
-  o.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.15);
-  g.gain.setValueAtTime(0.15, ctx.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
-  o.connect(g); g.connect(ctx.destination);
-  o.start(); o.stop(ctx.currentTime + 0.42);
+  o.frequency.setValueAtTime(880, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(1760, actx.currentTime + 0.15);
+  g.gain.setValueAtTime(0.15, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.4);
+  o.connect(g); g.connect(actx.destination);
+  o.start(); o.stop(actx.currentTime + 0.42);
 }
 
 function playHappy() {
   ensureAudio();
-  const ctx = state.audioCtx;
+  const actx = state.audioCtx;
   [523, 659, 784].forEach((f, i) => {
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
+    const o = actx.createOscillator();
+    const g = actx.createGain();
     o.type = 'sine';
     o.frequency.value = f;
-    g.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.08);
-    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.08 + 0.25);
-    o.connect(g); g.connect(ctx.destination);
-    o.start(ctx.currentTime + i * 0.08);
-    o.stop(ctx.currentTime + i * 0.08 + 0.26);
+    g.gain.setValueAtTime(0.1, actx.currentTime + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + i * 0.08 + 0.25);
+    o.connect(g); g.connect(actx.destination);
+    o.start(actx.currentTime + i * 0.08);
+    o.stop(actx.currentTime + i * 0.08 + 0.26);
   });
 }
 
-/* ---------- RESIZE (portrait first) ---------- */
+/* ---------- RESIZE ---------- */
 function resize() {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   state.W = window.innerWidth;
@@ -214,7 +211,6 @@ function resize() {
   canvas.style.height = state.H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-  // Fit background cover, keep portrait feel
   const bgAspect = bgImg.width / bgImg.height;
   const screenAspect = state.W / state.H;
   if (screenAspect > bgAspect) {
@@ -260,7 +256,6 @@ function updateHero(dt) {
 
   if (h.state === 'interact') return;
 
-  // Path following
   if (h.path.length && h.pathIndex < h.path.length) {
     const target = h.path[h.pathIndex];
     const dx = target.x - h.x;
@@ -270,18 +265,15 @@ function updateHero(dt) {
     if (dist < 0.012) {
       h.pathIndex++;
       if (h.pathIndex >= h.path.length) {
-        // arrived
         h.speed = 0;
         h.state = 'idle';
         h.walkPhase = 0;
-        // start interaction if looking at object
         if (h.lookAt && !h.lookAt.done) {
           startInteraction(h.lookAt);
         }
         return;
       }
     } else {
-      // accelerate / decelerate
       const desired = Math.min(h.maxSpeed, dist * 2.5);
       if (h.speed < desired) h.speed = Math.min(desired, h.speed + h.accel * dt);
       else h.speed = Math.max(desired, h.speed - h.accel * 1.8 * dt);
@@ -291,7 +283,6 @@ function updateHero(dt) {
       h.x += vx;
       h.y += vy;
 
-      // direction
       if (Math.abs(dx) > 0.002) {
         h.dir = dx > 0 ? 1 : -1;
       }
@@ -302,7 +293,6 @@ function updateHero(dt) {
       h.armSwing = Math.sin(h.walkPhase) * 0.18;
       h.tilt = Math.sin(h.walkPhase * 0.5) * 0.03 * h.dir;
 
-      // footsteps
       if (Math.sin(h.walkPhase) > 0.92 && Math.sin(h.walkPhase - h.speed * 55 * dt) <= 0.92) {
         playFootstep();
       }
@@ -315,7 +305,6 @@ function updateHero(dt) {
     if (h.state === 'walk') h.state = 'idle';
   }
 
-  // depth scale
   h.scale = 0.28 + (1 - h.y) * 0.22;
 }
 
@@ -323,7 +312,7 @@ function startInteraction(obj) {
   const h = state.hero;
   h.state = 'interact';
   h.lookAt = obj;
-  obj.anim = 1; // start object animation
+  obj.anim = 1;
 
   setTimeout(() => {
     if (!obj.done) {
@@ -331,11 +320,9 @@ function startInteraction(obj) {
       state.questDone++;
       progressEl.textContent = state.questDone + ' / ' + state.totalQuest;
       playCoin();
-      // happy reaction
       h.state = 'happy';
       h.happyTimer = 1400;
       playHappy();
-      // particles
       spawnParticles(obj.x, obj.y);
     }
     h.lookAt = null;
@@ -370,7 +357,6 @@ function onPointer(e) {
   const sy = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
   const n = toNorm(sx, sy);
 
-  // hit test objects (priority)
   let hit = null;
   for (const o of state.objects) {
     if (o.done) continue;
@@ -381,7 +367,7 @@ function onPointer(e) {
   if (hit) {
     const h = state.hero;
     h.lookAt = hit;
-    h.path = findPath(h.x, h.y, hit.x, hit.y - 0.04); // stop slightly above
+    h.path = findPath(h.x, h.y, hit.x, hit.y - 0.04);
     h.pathIndex = 0;
     h.state = 'walk';
   }
@@ -400,7 +386,6 @@ function updateParticles(dt) {
     p.life -= dt * 0.0012;
     if (p.life <= 0) state.particles.splice(i, 1);
   }
-  // occasional falling leaf
   if (Math.random() < 0.02) {
     state.particles.push({
       x: Math.random() * state.W,
@@ -419,13 +404,11 @@ function draw() {
   ctx.fillStyle = '#0a0f0a';
   ctx.fillRect(0, 0, state.W, state.H);
 
-  // background
   ctx.drawImage(bgImg,
     state.offsetX, state.offsetY,
     bgImg.width * state.scale,
     bgImg.height * state.scale);
 
-  // subtle ambient motion (very light)
   const t = performance.now() * 0.0003;
   ctx.save();
   ctx.globalAlpha = 0.04;
@@ -439,7 +422,6 @@ function draw() {
   }
   ctx.restore();
 
-  // objects feedback
   for (const o of state.objects) {
     if (o.anim > 0) {
       o.anim -= 0.04;
@@ -465,7 +447,6 @@ function draw() {
     }
   }
 
-  // particles
   for (const p of state.particles) {
     ctx.globalAlpha = Math.max(0, p.life);
     ctx.fillStyle = p.color;
@@ -475,34 +456,26 @@ function draw() {
   }
   ctx.globalAlpha = 1;
 
-  // hero
   drawHero();
 }
 
 function drawHero() {
   const h = state.hero;
   const s = toScreen(h.x, h.y);
-  const hs = h.scale * state.scale * (heroImg.width / 900); // tune size
+  const hs = h.scale * state.scale * (heroImg.width / 900);
 
   ctx.save();
   ctx.translate(s.x, s.y + h.bob);
-
-  // slight perspective tilt
   ctx.rotate(h.tilt);
-
-  // flip
   ctx.scale(h.dir, 1);
 
-  // subtle squash on walk
   const squash = h.state === 'walk' ? 1 + Math.sin(h.walkPhase) * 0.03 : 1;
   ctx.scale(1 / squash, squash);
 
-  // draw character (anchored at feet)
   const drawW = heroImg.width * hs * 0.55;
   const drawH = heroImg.height * hs * 0.55;
   ctx.drawImage(heroImg, -drawW / 2, -drawH + 8, drawW, drawH);
 
-  // simple arm indication (very light secondary)
   if (h.state === 'walk' || h.state === 'happy') {
     ctx.globalAlpha = 0.15;
     ctx.strokeStyle = '#8b6b4a';
@@ -538,18 +511,15 @@ function init() {
   createObjects();
   resize();
   window.addEventListener('resize', resize);
-  // start position
   state.hero.x = 0.42;
   state.hero.y = 0.82;
   requestAnimationFrame(loop);
 
-  // Telegram back button etc. optional
   if (tg) {
     tg.MainButton.hide();
   }
 }
 
-// Safety: if images fail, still try
 setTimeout(() => {
   if (assetsReady < 2) {
     console.warn('Assets not fully loaded, attempting start anyway');
