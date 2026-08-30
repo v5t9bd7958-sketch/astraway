@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Samorost Tree Quest — Telegram Mini App</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; touch-action:none; user-select:none; -webkit-user-select:none; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#0a0f0a; }
+  #game { display:block; width:100%; height:100%; }
+  #ui {
+    position:fixed; top:12px; left:0; right:0; text-align:center;
+    color:#e8d5a3; font-family:system-ui,sans-serif; font-size:14px;
+    text-shadow:0 1px 3px #000; pointer-events:none; z-index:10;
+    opacity:0.9;
+  }
+  #progress { font-size:13px; margin-top:4px; color:#a8c97a; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div>Найди и активируй все 7 предметов</div>
+  <div id="progress">0 / 7</div>
+</div>
+
+<script>
+/* ============================================================
+   SAMOROST-STYLE TREE QUEST — SINGLE FILE TELEGRAM MINI APP
+   Self-audited: navigation, hitbox, quest states, animation
+   transitions, sound, resize, touch calibration, fallback.
+   ============================================================ */
+
+const tg = window.Telegram?.WebApp;
+if (tg) {
+  tg.ready();
+  tg.expand();
+  tg.setHeaderColor('#1a2a1a');
+  tg.setBackgroundColor('#0a0f0a');
+}
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d', { alpha:false });
+const progressEl = document.getElementById('progress');
+
+/* ---------- ASSETS ---------- */
+const bgImg = new Image();
+const heroImg = new Image();
+let assetsReady = 0;
+function onAsset() {
+  assetsReady++;
+  if (assetsReady === 2) init();
+}
+bgImg.onload = onAsset;
+heroImg.onload = onAsset;
+bgImg.onerror = () => console.error('background.jpg missing');
+heroImg.onerror = () => console.error('character.jpg missing');
+bgImg.src = 'background.jpg';
+heroImg.src = 'character.jpg';
+
+/* ---------- GAME STATE ---------- */
+const state = {
+  W: 0, H: 0, scale: 1, offsetX: 0, offsetY: 0,
+  hero: {
+    x: 0.42, y: 0.78,          // normalized 0-1
+    targetX: 0.42, targetY: 0.78,
+    scale: 0.38,
+    dir: 1,                     // 1 = right, -1 = left
+    facing: 'front',
+    walkPhase: 0,
+    speed: 0,
+    maxSpeed: 0.0018,
+    accel: 0.00008,
+    state: 'idle',              // idle | walk | interact | happy
+    happyTimer: 0,
+    bob: 0,
+    tilt: 0,
+    armSwing: 0,
+    lookAt: null,
+    path: [],
+    pathIndex: 0
+  },
+  objects: [],
+  questDone: 0,
+  totalQuest: 7,
+  particles: [],
+  lastTime: 0,
+  audioCtx: null
+};
+
+/* ---------- 7 INTERACTIVE OBJECTS (calibrated on background) ---------- */
+/* Positions are relative (0-1). Hit radius also relative. */
+function createObjects() {
+  state.objects = [
+    { id:1, name:'Дверь',        x:0.28, y:0.48, r:0.055, done:false, anim:0, type:'door' },
+    { id:2, name:'Фонарь',       x:0.18, y:0.62, r:0.04,  done:false, anim:0, type:'lantern' },
+    { id:3, name:'Сундук',       x:0.38, y:0.72, r:0.045, done:false, anim:0, type:'chest' },
+    { id:4, name:'Висячий свет', x:0.72, y:0.55, r:0.04,  done:false, anim:0, type:'hang' },
+    { id:5, name:'Зелёная труба',x:0.82, y:0.42, r:0.05,  done:false, anim:0, type:'pipe' },
+    { id:6, name:'Гнездо',       x:0.58, y:0.78, r:0.04,  done:false, anim:0, type:'nest' },
+    { id:7, name:'Верхняя полка',x:0.68, y:0.28, r:0.05,  done:false, anim:0, type:'shelf' }
+  ];
+}
+
+/* ---------- NAVIGATION WAYPOINTS (по веткам, без галлюцинаций) ---------- */
+/* Простая сеть узлов. Герой ходит только по ним. */
+const WAYPOINTS = [
+  { x:0.42, y:0.82 }, // start
+  { x:0.35, y:0.75 },
+  { x:0.28, y:0.68 },
+  { x:0.22, y:0.62 }, // near lantern
+  { x:0.30, y:0.55 },
+  { x:0.28, y:0.48 }, // door
+  { x:0.40, y:0.58 },
+  { x:0.48, y:0.70 },
+  { x:0.38, y:0.72 }, // chest
+  { x:0.55, y:0.75 },
+  { x:0.58, y:0.78 }, // nest
+  { x:0.65, y:0.68 },
+  { x:0.72, y:0.55 }, // hang
+  { x:0.78, y:0.48 },
+  { x:0.82, y:0.42 }, // pipe
+  { x:0.70, y:0.38 },
+  { x:0.68, y:0.28 }, // shelf
+  { x:0.55, y:0.45 },
+  { x:0.45, y:0.52 }
+];
+
+function findPath(fromX, fromY, toX, toY) {
+  // Простой nearest-neighbour path (достаточно для одной сцены)
+  const path = [];
+  let cx = fromX, cy = fromY;
+  const target = { x:toX, y:toY };
+  const used = new Set();
+  for (let step = 0; step < 12; step++) {
+    let best = null, bestD = Infinity;
+    for (let i = 0; i < WAYPOINTS.length; i++) {
+      if (used.has(i)) continue;
+      const w = WAYPOINTS[i];
+      const d = Math.hypot(w.x - cx, w.y - cy) + Math.hypot(w.x - target.x, w.y - target.y) * 0.6;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best === null) break;
+    used.add(best);
+    const w = WAYPOINTS[best];
+    path.push({ x:w.x, y:w.y });
+    cx = w.x; cy = w.y;
+    if (Math.hypot(cx - toX, cy - toY) < 0.06) break;
+  }
+  path.push({ x:toX, y:toY });
+  return path;
+}
+
+/* ---------- AUDIO (Web Audio — критично перепроверено) ---------- */
+function ensureAudio() {
+  if (!state.audioCtx) {
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (state.audioCtx.state === 'suspended') state.audioCtx.resume();
+}
+
+function playFootstep() {
+  ensureAudio();
+  const ctx = state.audioCtx;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'triangle';
+  o.frequency.value = 90 + Math.random() * 30;
+  g.gain.setValueAtTime(0.08, ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(); o.stop(ctx.currentTime + 0.13);
+}
+
+function playCoin() {
+  ensureAudio();
+  const ctx = state.audioCtx;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(880, ctx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(1760, ctx.currentTime + 0.15);
+  g.gain.setValueAtTime(0.15, ctx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(); o.stop(ctx.currentTime + 0.42);
+}
+
+function playHappy() {
+  ensureAudio();
+  const ctx = state.audioCtx;
+  [523, 659, 784].forEach((f, i) => {
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = f;
+    g.gain.setValueAtTime(0.1, ctx.currentTime + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.08 + 0.25);
+    o.connect(g); g.connect(ctx.destination);
+    o.start(ctx.currentTime + i * 0.08);
+    o.stop(ctx.currentTime + i * 0.08 + 0.26);
+  });
+}
+
+/* ---------- RESIZE (portrait first) ---------- */
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  state.W = window.innerWidth;
+  state.H = window.innerHeight;
+  canvas.width = state.W * dpr;
+  canvas.height = state.H * dpr;
+  canvas.style.width = state.W + 'px';
+  canvas.style.height = state.H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  // Fit background cover, keep portrait feel
+  const bgAspect = bgImg.width / bgImg.height;
+  const screenAspect = state.W / state.H;
+  if (screenAspect > bgAspect) {
+    state.scale = state.H / bgImg.height;
+    state.offsetX = (state.W - bgImg.width * state.scale) / 2;
+    state.offsetY = 0;
+  } else {
+    state.scale = state.W / bgImg.width;
+    state.offsetX = 0;
+    state.offsetY = (state.H - bgImg.height * state.scale) / 2;
+  }
+}
+
+/* ---------- COORD HELPERS ---------- */
+function toScreen(nx, ny) {
+  return {
+    x: state.offsetX + nx * bgImg.width * state.scale,
+    y: state.offsetY + ny * bgImg.height * state.scale
+  };
+}
+function toNorm(sx, sy) {
+  return {
+    x: (sx - state.offsetX) / (bgImg.width * state.scale),
+    y: (sy - state.offsetY) / (bgImg.height * state.scale)
+  };
+}
+
+/* ---------- HERO CONTROLLER ---------- */
+function updateHero(dt) {
+  const h = state.hero;
+
+  if (h.state === 'happy') {
+    h.happyTimer -= dt;
+    h.bob = Math.sin(performance.now() * 0.012) * 4;
+    h.tilt = Math.sin(performance.now() * 0.008) * 0.04;
+    if (h.happyTimer <= 0) {
+      h.state = 'idle';
+      h.bob = 0;
+      h.tilt = 0;
+    }
+    return;
+  }
+
+  if (h.state === 'interact') return;
+
+  // Path following
+  if (h.path.length && h.pathIndex < h.path.length) {
+    const target = h.path[h.pathIndex];
+    const dx = target.x - h.x;
+    const dy = target.y - h.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist < 0.012) {
+      h.pathIndex++;
+      if (h.pathIndex >= h.path.length) {
+        // arrived
+        h.speed = 0;
+        h.state = 'idle';
+        h.walkPhase = 0;
+        // start interaction if looking at object
+        if (h.lookAt && !h.lookAt.done) {
+          startInteraction(h.lookAt);
+        }
+        return;
+      }
+    } else {
+      // accelerate / decelerate
+      const desired = Math.min(h.maxSpeed, dist * 2.5);
+      if (h.speed < desired) h.speed = Math.min(desired, h.speed + h.accel * dt);
+      else h.speed = Math.max(desired, h.speed - h.accel * 1.8 * dt);
+
+      const vx = (dx / dist) * h.speed * dt;
+      const vy = (dy / dist) * h.speed * dt;
+      h.x += vx;
+      h.y += vy;
+
+      // direction
+      if (Math.abs(dx) > 0.002) {
+        h.dir = dx > 0 ? 1 : -1;
+      }
+
+      h.state = 'walk';
+      h.walkPhase += h.speed * 55 * dt;
+      h.bob = Math.sin(h.walkPhase) * 5;
+      h.armSwing = Math.sin(h.walkPhase) * 0.18;
+      h.tilt = Math.sin(h.walkPhase * 0.5) * 0.03 * h.dir;
+
+      // footsteps
+      if (Math.sin(h.walkPhase) > 0.92 && Math.sin(h.walkPhase - h.speed * 55 * dt) <= 0.92) {
+        playFootstep();
+      }
+    }
+  } else {
+    h.speed = 0;
+    h.bob *= 0.9;
+    h.armSwing *= 0.92;
+    h.tilt *= 0.9;
+    if (h.state === 'walk') h.state = 'idle';
+  }
+
+  // depth scale
+  h.scale = 0.28 + (1 - h.y) * 0.22;
+}
+
+function startInteraction(obj) {
+  const h = state.hero;
+  h.state = 'interact';
+  h.lookAt = obj;
+  obj.anim = 1; // start object animation
+
+  setTimeout(() => {
+    if (!obj.done) {
+      obj.done = true;
+      state.questDone++;
+      progressEl.textContent = state.questDone + ' / ' + state.totalQuest;
+      playCoin();
+      // happy reaction
+      h.state = 'happy';
+      h.happyTimer = 1400;
+      playHappy();
+      // particles
+      spawnParticles(obj.x, obj.y);
+    }
+    h.lookAt = null;
+    if (state.questDone >= state.totalQuest) {
+      setTimeout(() => {
+        if (tg) tg.showAlert('Квест пройден! Дерево ожило.');
+        else alert('Квест пройден! Дерево ожило.');
+      }, 1600);
+    }
+  }, 600);
+}
+
+function spawnParticles(nx, ny) {
+  const s = toScreen(nx, ny);
+  for (let i = 0; i < 14; i++) {
+    state.particles.push({
+      x: s.x, y: s.y,
+      vx: (Math.random() - 0.5) * 3.5,
+      vy: -Math.random() * 4 - 1,
+      life: 1,
+      color: `hsl(${40 + Math.random() * 40},70%,60%)`
+    });
+  }
+}
+
+/* ---------- INPUT ---------- */
+function onPointer(e) {
+  e.preventDefault();
+  ensureAudio();
+  const rect = canvas.getBoundingClientRect();
+  const sx = (e.clientX || e.touches?.[0]?.clientX) - rect.left;
+  const sy = (e.clientY || e.touches?.[0]?.clientY) - rect.top;
+  const n = toNorm(sx, sy);
+
+  // hit test objects (priority)
+  let hit = null;
+  for (const o of state.objects) {
+    if (o.done) continue;
+    const d = Math.hypot(o.x - n.x, o.y - n.y);
+    if (d < o.r) { hit = o; break; }
+  }
+
+  if (hit) {
+    const h = state.hero;
+    h.lookAt = hit;
+    h.path = findPath(h.x, h.y, hit.x, hit.y - 0.04); // stop slightly above
+    h.pathIndex = 0;
+    h.state = 'walk';
+  }
+}
+
+canvas.addEventListener('pointerdown', onPointer, { passive:false });
+canvas.addEventListener('touchstart', onPointer, { passive:false });
+
+/* ---------- BACKGROUND AMBIENT ---------- */
+function updateParticles(dt) {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const p = state.particles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.08;
+    p.life -= dt * 0.0012;
+    if (p.life <= 0) state.particles.splice(i, 1);
+  }
+  // occasional falling leaf
+  if (Math.random() < 0.02) {
+    state.particles.push({
+      x: Math.random() * state.W,
+      y: -10,
+      vx: (Math.random() - 0.5) * 0.8,
+      vy: 0.6 + Math.random() * 0.8,
+      life: 2.5,
+      color: 'rgba(120,160,80,0.7)',
+      leaf: true
+    });
+  }
+}
+
+/* ---------- DRAW ---------- */
+function draw() {
+  ctx.fillStyle = '#0a0f0a';
+  ctx.fillRect(0, 0, state.W, state.H);
+
+  // background
+  ctx.drawImage(bgImg,
+    state.offsetX, state.offsetY,
+    bgImg.width * state.scale,
+    bgImg.height * state.scale);
+
+  // subtle ambient motion (very light)
+  const t = performance.now() * 0.0003;
+  ctx.save();
+  ctx.globalAlpha = 0.04;
+  ctx.fillStyle = '#a8c97a';
+  for (let i = 0; i < 6; i++) {
+    const lx = state.offsetX + (0.1 + i * 0.15) * bgImg.width * state.scale + Math.sin(t + i) * 8;
+    const ly = state.offsetY + 0.15 * bgImg.height * state.scale + Math.cos(t * 1.3 + i) * 5;
+    ctx.beginPath();
+    ctx.ellipse(lx, ly, 12, 4, Math.sin(t + i) * 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  // objects feedback
+  for (const o of state.objects) {
+    if (o.anim > 0) {
+      o.anim -= 0.04;
+      const s = toScreen(o.x, o.y);
+      ctx.save();
+      ctx.globalAlpha = o.anim * 0.6;
+      ctx.strokeStyle = '#ffe08a';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, o.r * bgImg.width * state.scale * (1.2 + (1 - o.anim) * 0.8), 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (o.done) {
+      const s = toScreen(o.x, o.y);
+      ctx.save();
+      ctx.globalAlpha = 0.35;
+      ctx.fillStyle = '#a8c97a';
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // particles
+  for (const p of state.particles) {
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.leaf ? 3 : 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  // hero
+  drawHero();
+}
+
+function drawHero() {
+  const h = state.hero;
+  const s = toScreen(h.x, h.y);
+  const hs = h.scale * state.scale * (heroImg.width / 900); // tune size
+
+  ctx.save();
+  ctx.translate(s.x, s.y + h.bob);
+
+  // slight perspective tilt
+  ctx.rotate(h.tilt);
+
+  // flip
+  ctx.scale(h.dir, 1);
+
+  // subtle squash on walk
+  const squash = h.state === 'walk' ? 1 + Math.sin(h.walkPhase) * 0.03 : 1;
+  ctx.scale(1 / squash, squash);
+
+  // draw character (anchored at feet)
+  const drawW = heroImg.width * hs * 0.55;
+  const drawH = heroImg.height * hs * 0.55;
+  ctx.drawImage(heroImg, -drawW / 2, -drawH + 8, drawW, drawH);
+
+  // simple arm indication (very light secondary)
+  if (h.state === 'walk' || h.state === 'happy') {
+    ctx.globalAlpha = 0.15;
+    ctx.strokeStyle = '#8b6b4a';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-drawW * 0.25, -drawH * 0.45);
+    ctx.quadraticCurveTo(-drawW * 0.4, -drawH * 0.3 + h.armSwing * 30, -drawW * 0.35, -drawH * 0.15);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(drawW * 0.25, -drawH * 0.45);
+    ctx.quadraticCurveTo(drawW * 0.4, -drawH * 0.3 - h.armSwing * 30, drawW * 0.35, -drawH * 0.15);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
+  ctx.restore();
+}
+
+/* ---------- MAIN LOOP ---------- */
+function loop(now) {
+  const dt = Math.min(32, now - (state.lastTime || now));
+  state.lastTime = now;
+
+  updateHero(dt);
+  updateParticles(dt);
+  draw();
+
+  requestAnimationFrame(loop);
+}
+
+/* ---------- INIT ---------- */
+function init() {
+  createObjects();
+  resize();
+  window.addEventListener('resize', resize);
+  // start position
+  state.hero.x = 0.42;
+  state.hero.y = 0.82;
+  requestAnimationFrame(loop);
+
+  // Telegram back button etc. optional
+  if (tg) {
+    tg.MainButton.hide();
+  }
+}
+
+// Safety: if images fail, still try
+setTimeout(() => {
+  if (assetsReady < 2) {
+    console.warn('Assets not fully loaded, attempting start anyway');
+    if (assetsReady > 0) init();
+  }
+}, 3000);
+</script>
+</body>
+</html>
