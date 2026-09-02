@@ -2,114 +2,80 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Astra - Волшебное дерево</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <link rel="stylesheet" href="style.css">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    >
+
+    <meta name="theme-color" content="#000000">
+
+    <title>ASTRAWAY</title>
+
+    <link rel="stylesheet" href="./style.css">
 </head>
+
 <body>
-    <div id="game-container">
-        <!-- Фон -->
-        <div id="background-layer">
-          <img id="bg-image" src="assets/background.jpg .jpeg" alt="Волшебное дерево">
+
+    <main id="game-container">
+
+        <canvas id="game-canvas"></canvas>
+
+        <div id="hud">
+
+            <div id="hud-left">
+                <div id="game-title">ASTRAWAY</div>
+            </div>
+
+            <div id="hud-right">
+                <button id="hint-button" type="button">?</button>
+                <button id="sound-button" type="button">♪</button>
+            </div>
+
         </div>
 
-        <!-- Объекты (скрытые, оживают при нахождении) -->
-        <div id="objects-layer">
-            <div class="hidden-object" id="obj-1" data-name="Горшок" style="left: 84%; top: 78%;">
-                <div class="object-glow"></div>
-                <div class="object-icon">🫙</div>
-            </div>
-            <div class="hidden-object" id="obj-2" data-name="Дверь" style="left: 49%; top: 48%;">
-                <div class="object-glow"></div>
-                <div class="object-icon">🚪</div>
-            </div>
-            <div class="hidden-object" id="obj-3" data-name="Веточка" style="left: 68%; top: 21%;">
-                <div class="object-glow"></div>
-                <div class="object-icon">🌿</div>
-            </div>
-            <div class="hidden-object" id="obj-4" data-name="Гриб" style="left: 13%; top: 85%;">
-                <div class="object-glow"></div>
-                <div class="object-icon">🍄</div>
-            </div>
-            <div class="hidden-object" id="obj-5" data-name="Цветок" style="left: 10%; top: 11%;">
-                <div class="object-glow"></div>
-                <div class="object-icon">🌸</div>
-            </div>
-        </div>
+        <div id="message" aria-live="polite"></div>
 
-        <!-- Персонаж (тролль CSS/SVG) -->
-        <div id="character-layer">
-            <div id="troll" class="troll-idle">
-                <div class="troll-body">
-                    <div class="troll-head">
-                        <div class="troll-eye left"></div>
-                        <div class="troll-eye right"></div>
-                        <div class="troll-mouth"></div>
-                        <div class="troll-horn left"></div>
-                        <div class="troll-horn right"></div>
-                    </div>
-                    <div class="troll-torso">
-                        <div class="troll-arm left">
-                            <div class="troll-hand"></div>
-                        </div>
-                        <div class="troll-arm right">
-                            <div class="troll-hand"></div>
-                        </div>
-                    </div>
-                    <div class="troll-legs">
-                        <div class="troll-leg left"></div>
-                        <div class="troll-leg right"></div>
-                    </div>
-                </div>
-                <!-- Облачко реплики -->
-                <div id="speech-bubble" class="hidden">
-                    <div class="bubble-tail"></div>
-                    <div class="bubble-text"></div>
-                </div>
+        <section id="start-screen" class="screen">
+
+            <div class="screen-card">
+
+                <h1>ASTRAWAY</h1>
+
+                <p>
+                    Иногда путь начинается<br>
+                    там, где его никто не видит.
+                </p>
+
+                <button id="start-button" type="button">
+                    НАЧАТЬ
+                </button>
+
             </div>
-        </div>
 
-        <!-- Портал (финал) -->
-        <div id="portal" class="hidden">
-            <div class="portal-ring ring-1"></div>
-            <div class="portal-ring ring-2"></div>
-            <div class="portal-ring ring-3"></div>
-            <div class="portal-core"></div>
-        </div>
+        </section>
 
-        <!-- UI -->
-        <div id="ui-layer">
-            <div id="counter">
-                <span class="counter-label">Найдено:</span>
-                <span id="found-count">0</span>
-                <span class="counter-total">/ 5</span>
+        <section id="victory-screen" class="screen hidden">
+
+            <div class="screen-card">
+
+                <h1>ПУТЬ ОТКРЫТ</h1>
+
+                <p id="victory-text">
+                    Ты нашёл всё, что искал.
+                </p>
+
+                <button id="restart-button" type="button">
+                    ЕЩЁ РАЗ
+                </button>
+
             </div>
-            <div id="hint-button" class="ui-btn">💡</div>
-            <div id="sound-toggle" class="ui-btn">🔊</div>
-        </div>
 
-        <!-- Экран победы -->
-        <div id="victory-screen" class="hidden">
-            <div class="victory-content">
-                <div class="victory-title">✨ Портал открыт! ✨</div>
-                <div class="victory-subtitle">Все артефакты найдены</div>
-                <button id="restart-btn" class="victory-btn">Играть снова</button>
-            </div>
-        </div>
+        </section>
 
-        <!-- Стартовый экран -->
-        <div id="start-screen">
-            <div class="start-content">
-                <div class="start-title">🌲 Astra 🌲</div>
-                <div class="start-subtitle">Найди 5 артефактов в волшебном дереве</div>
-                <button id="start-btn" class="start-btn">Начать приключение</button>
-            </div>
-        </div>
-    </div>
+    </main>
 
-    <script src="script.js"></script>
+    <script type="module" src="./engine/main.js"></script>
+
 </body>
 </html>
