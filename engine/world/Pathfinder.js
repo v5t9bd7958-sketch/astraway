@@ -1,7 +1,6 @@
 import {
     distance,
     distanceSq,
-    finite,
     finitePoint
 } from "../character/MathUtils.js";
 
@@ -20,7 +19,11 @@ export class Pathfinder {
     }
 
 
-    findPath(startPoint, targetPoint, options = {}) {
+    findPath(
+        startPoint,
+        targetPoint,
+        options = {}
+    ) {
 
         if (
             !finitePoint(startPoint) ||
@@ -29,16 +32,22 @@ export class Pathfinder {
             return [];
         }
 
-        const state = options.state || {};
+        const state =
+            options.state || {};
 
         const startNode =
             options.startNode ||
             this.graph.findNearestNode(
                 startPoint,
                 {
-                    surface: options.startSurface || null,
+                    surface:
+                        options.startSurface ||
+                        null,
+
                     maxDistance:
-                        Number.isFinite(options.maxStartDistance)
+                        Number.isFinite(
+                            options.maxStartDistance
+                        )
                             ? options.maxStartDistance
                             : Infinity
                 }
@@ -49,19 +58,29 @@ export class Pathfinder {
             this.graph.findNearestNode(
                 targetPoint,
                 {
-                    surface: options.targetSurface || null,
+                    surface:
+                        options.targetSurface ||
+                        null,
+
                     maxDistance:
-                        Number.isFinite(options.maxTargetDistance)
+                        Number.isFinite(
+                            options.maxTargetDistance
+                        )
                             ? options.maxTargetDistance
                             : Infinity
                 }
             );
 
-        if (!startNode || !targetNode) {
+        if (
+            !startNode ||
+            !targetNode
+        ) {
             return [];
         }
 
-        if (startNode === targetNode) {
+        if (
+            startNode === targetNode
+        ) {
 
             return this.buildDirectPath(
                 startPoint,
@@ -77,7 +96,9 @@ export class Pathfinder {
                 state
             );
 
-        if (!nodePath.length) {
+        if (
+            !nodePath.length
+        ) {
             return [];
         }
 
@@ -89,27 +110,43 @@ export class Pathfinder {
     }
 
 
-    findNodePath(startNode, targetNode, state = {}) {
+    findNodePath(
+        startNode,
+        targetNode,
+        state = {}
+    ) {
 
-        if (!startNode || !targetNode) {
+        if (
+            !startNode ||
+            !targetNode
+        ) {
             return [];
         }
 
-        if (startNode === targetNode) {
+        if (
+            startNode === targetNode
+        ) {
             return [startNode];
         }
 
-        const openSet = new Set([
-            startNode
-        ]);
+        const openSet =
+            new Set([
+                startNode
+            ]);
 
-        const cameFrom = new Map();
+        const cameFrom =
+            new Map();
 
-        const gScore = new Map();
+        const gScore =
+            new Map();
 
-        const fScore = new Map();
+        const fScore =
+            new Map();
 
-        for (const node of this.graph.getAllNodes()) {
+        for (
+            const node
+            of this.graph.getAllNodes()
+        ) {
 
             gScore.set(
                 node,
@@ -135,7 +172,9 @@ export class Pathfinder {
             )
         );
 
-        while (openSet.size > 0) {
+        while (
+            openSet.size > 0
+        ) {
 
             const current =
                 this.getLowestScoreNode(
@@ -147,7 +186,9 @@ export class Pathfinder {
                 break;
             }
 
-            if (current === targetNode) {
+            if (
+                current === targetNode
+            ) {
 
                 return this.reconstructPath(
                     cameFrom,
@@ -155,7 +196,9 @@ export class Pathfinder {
                 );
             }
 
-            openSet.delete(current);
+            openSet.delete(
+                current
+            );
 
             const neighbors =
                 this.graph.getNeighbors(
@@ -163,23 +206,43 @@ export class Pathfinder {
                     state
                 );
 
-            for (const item of neighbors) {
+            for (
+                const item
+                of neighbors
+            ) {
 
-                const neighbor = item.node;
-                const edge = item.edge;
+                const neighbor =
+                    item.node;
 
-                if (!neighbor || !edge) {
+                const edge =
+                    item.edge;
+
+                if (
+                    !neighbor ||
+                    !edge
+                ) {
                     continue;
                 }
 
                 const tentativeG =
-                    (gScore.get(current) ?? Infinity) +
+                    (
+                        gScore.get(
+                            current
+                        ) ??
+                        Infinity
+                    ) +
                     edge.getCost();
 
                 const knownG =
-                    gScore.get(neighbor) ?? Infinity;
+                    gScore.get(
+                        neighbor
+                    ) ??
+                    Infinity;
 
-                if (tentativeG < knownG) {
+                if (
+                    tentativeG <
+                    knownG
+                ) {
 
                     cameFrom.set(
                         neighbor,
@@ -214,20 +277,35 @@ export class Pathfinder {
     }
 
 
-    reconstructPath(cameFrom, current) {
+    reconstructPath(
+        cameFrom,
+        current
+    ) {
 
-        const path = [current];
+        const path = [
+            current
+        ];
 
-        let cursor = current;
+        let cursor =
+            current;
 
-        while (cameFrom.has(cursor)) {
+        while (
+            cameFrom.has(
+                cursor
+            )
+        ) {
 
             const record =
-                cameFrom.get(cursor);
+                cameFrom.get(
+                    cursor
+                );
 
-            cursor = record.node;
+            cursor =
+                record.node;
 
-            path.push(cursor);
+            path.push(
+                cursor
+            );
         }
 
         path.reverse();
@@ -236,20 +314,37 @@ export class Pathfinder {
     }
 
 
-    getLowestScoreNode(openSet, scores) {
+    getLowestScoreNode(
+        openSet,
+        scores
+    ) {
 
         let best = null;
-        let bestScore = Infinity;
 
-        for (const node of openSet) {
+        let bestScore =
+            Infinity;
+
+        for (
+            const node
+            of openSet
+        ) {
 
             const score =
-                scores.get(node) ?? Infinity;
+                scores.get(
+                    node
+                ) ??
+                Infinity;
 
-            if (score < bestScore) {
+            if (
+                score <
+                bestScore
+            ) {
 
-                bestScore = score;
-                best = node;
+                bestScore =
+                    score;
+
+                best =
+                    node;
             }
         }
 
@@ -257,9 +352,15 @@ export class Pathfinder {
     }
 
 
-    heuristic(nodeA, nodeB) {
+    heuristic(
+        nodeA,
+        nodeB
+    ) {
 
-        if (!nodeA || !nodeB) {
+        if (
+            !nodeA ||
+            !nodeB
+        ) {
             return Infinity;
         }
 
@@ -278,7 +379,10 @@ export class Pathfinder {
 
         const result = [];
 
-        if (node && node.surface) {
+        if (
+            node &&
+            node.surface
+        ) {
 
             const startT =
                 node.surface.projectT(
@@ -303,7 +407,8 @@ export class Pathfinder {
             result.push({
                 x: startProjected.x,
                 y: startProjected.y,
-                surface: node.surface,
+                surface:
+                    node.surface,
                 t: startT
             });
 
@@ -311,13 +416,15 @@ export class Pathfinder {
                 distanceSq(
                     startProjected,
                     targetProjected
-                ) > 0.0001
+                ) >
+                0.0001
             ) {
 
                 result.push({
                     x: targetProjected.x,
                     y: targetProjected.y,
-                    surface: node.surface,
+                    surface:
+                        node.surface,
                     t: targetT
                 });
             }
@@ -349,7 +456,9 @@ export class Pathfinder {
         nodePath
     ) {
 
-        if (!nodePath.length) {
+        if (
+            !nodePath.length
+        ) {
             return [];
         }
 
@@ -362,7 +471,10 @@ export class Pathfinder {
             nodePath[0].t
         );
 
-        for (const node of nodePath) {
+        for (
+            const node
+            of nodePath
+        ) {
 
             if (!node) {
                 continue;
@@ -376,18 +488,66 @@ export class Pathfinder {
             );
         }
 
+        /*
+         * Критически важно:
+         *
+         * Последняя точка приходит
+         * из тапа пользователя.
+         *
+         * Она может находиться рядом
+         * с поверхностью, но не точно
+         * на ней.
+         *
+         * Если последний узел имеет
+         * поверхность, проектируем тап
+         * обратно на эту поверхность.
+         */
         const lastNode =
-            nodePath[nodePath.length - 1];
+            nodePath[
+                nodePath.length - 1
+            ];
 
+        const lastSurface =
+            lastNode &&
+            lastNode.surface
+                ? lastNode.surface
+                : null;
+
+        if (lastSurface) {
+
+            const projected =
+                lastSurface.projectPoint(
+                    targetPoint
+                );
+
+            if (
+                projected &&
+                projected.point &&
+                Number.isFinite(
+                    projected.t
+                )
+            ) {
+
+                this.addPathPoint(
+                    path,
+                    projected.point,
+                    lastSurface,
+                    projected.t
+                );
+
+                return path;
+            }
+        }
+
+        /*
+         * Если поверхность отсутствует,
+         * сохраняем исходную точку.
+         */
         this.addPathPoint(
             path,
             targetPoint,
-            lastNode
-                ? lastNode.surface
-                : null,
-            lastNode
-                ? lastNode.t
-                : 0
+            null,
+            0
         );
 
         return path;
@@ -401,30 +561,44 @@ export class Pathfinder {
         t
     ) {
 
-        if (!finitePoint(point)) {
+        if (
+            !finitePoint(point)
+        ) {
             return;
         }
 
         const safeT =
             Number.isFinite(t)
-                ? Math.max(0, Math.min(1, t))
+                ? Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        t
+                    )
+                )
                 : 0;
 
         const previous =
-            path[path.length - 1];
+            path[
+                path.length - 1
+            ];
 
         if (
             previous &&
             distanceSq(
                 previous,
                 point
-            ) < 0.0001
+            ) <
+            0.0001
         ) {
 
             if (
-                previous.surface === surface
+                previous.surface ===
+                surface
             ) {
-                previous.t = safeT;
+
+                previous.t =
+                    safeT;
             }
 
             return;
@@ -433,7 +607,8 @@ export class Pathfinder {
         path.push({
             x: point.x,
             y: point.y,
-            surface: surface || null,
+            surface:
+                surface || null,
             t: safeT
         });
     }
@@ -453,9 +628,14 @@ export class Pathfinder {
         }
 
         let best = null;
-        let bestDistance = Infinity;
 
-        for (const surface of surfaces) {
+        let bestDistance =
+            Infinity;
+
+        for (
+            const surface
+            of surfaces
+        ) {
 
             if (!surface) {
                 continue;
@@ -480,11 +660,18 @@ export class Pathfinder {
 
                 best = {
                     surface,
-                    t: projection.t,
+
+                    t:
+                        projection.t,
+
                     point: {
-                        x: projection.point.x,
-                        y: projection.point.y
+                        x:
+                            projection.point.x,
+
+                        y:
+                            projection.point.y
                     },
+
                     distance:
                         projection.distance
                 };
@@ -499,8 +686,10 @@ export class Pathfinder {
 
         return (
             this.graph &&
-            typeof this.graph.getNode === "function" &&
-            typeof this.graph.getNeighbors === "function"
+            typeof this.graph.getNode ===
+                "function" &&
+            typeof this.graph.getNeighbors ===
+                "function"
         );
     }
 }
