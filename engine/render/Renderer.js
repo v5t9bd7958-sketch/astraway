@@ -25,7 +25,7 @@ export class Renderer {
         this.backgroundLoaded = false;
         this.backgroundError = false;
         this.backgroundSrc =
-            './assets/background.jpg%20.jpeg';
+    './assets/background.jpg .jpeg';
         this.background.onload = () => {
             this.backgroundLoaded = true;
             this.backgroundError = false;
