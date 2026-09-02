@@ -4,9 +4,7 @@
 // Combines:
 // Skeleton + IK + Gait + Animation State Machine
 //
-// Important:
-// Character does not know anything about Canvas.
-// It works entirely in world coordinates.
+// Character works entirely in world coordinates.
 
 import Skeleton from "./Skeleton.js";
 
@@ -22,12 +20,10 @@ import AnimationStateMachine, {
 
 import {
     clamp,
-    damp,
     dampAngle,
     distance,
     finite,
     normalize,
-    normalizeAngle,
     shortestAngleDelta
 } from "./MathUtils.js";
 
@@ -204,22 +200,18 @@ export class Character {
             );
 
 
-        this.skeleton.setRootPosition(
-            this.position.x,
-            this.position.y
-        );
-
-        this.skeleton.setRootAngle(
-            this.moveAngle
-        );
-
-
         if (surface) {
 
             const frame =
                 surface.getFrame(
                     this.currentSurfaceT
                 );
+
+            this.position.x =
+                frame.position.x;
+
+            this.position.y =
+                frame.position.y;
 
 
             this.gait.initialize(
@@ -230,6 +222,16 @@ export class Character {
                 this.currentSurfaceT
             );
         }
+
+
+        this.skeleton.setRootPosition(
+            this.position.x,
+            this.position.y
+        );
+
+        this.skeleton.setRootAngle(
+            this.moveAngle
+        );
 
 
         this.updateSkeletonBase();
@@ -250,6 +252,8 @@ export class Character {
 
             this.pathIndex = 0;
 
+            this.isMoving = false;
+
             return;
         }
 
@@ -259,20 +263,58 @@ export class Character {
                 .filter(Boolean)
                 .map(point => ({
 
-                    x: finite(point.x, 0),
+                    x:
+                        finite(
+                            point.x,
+                            0
+                        ),
 
-                    y: finite(point.y, 0),
+                    y:
+                        finite(
+                            point.y,
+                            0
+                        ),
 
                     surface:
                         point.surface ||
                         null,
 
                     t:
-                        finite(point.t, 0)
+                        finite(
+                            point.t,
+                            0
+                        )
                 }));
 
 
         this.pathIndex = 0;
+
+
+        /*
+         * The first path point is normally
+         * the character's current position.
+         *
+         * Its t may come from a navigation
+         * node rather than the exact current
+         * position.
+         *
+         * Therefore derive the starting
+         * surface parameter from the actual
+         * character position.
+         */
+
+        if (
+            this.path.length > 0 &&
+            this.path[0].surface &&
+            this.currentSurface ===
+            this.path[0].surface
+        ) {
+
+            this.currentSurfaceT =
+                this.currentSurface.projectT(
+                    this.position
+                );
+        }
 
 
         this.isMoving =
@@ -328,9 +370,17 @@ export class Character {
 
         this.lookTarget = {
 
-            x: finite(target.x, this.position.x),
+            x:
+                finite(
+                    target.x,
+                    this.position.x
+                ),
 
-            y: finite(target.y, this.position.y)
+            y:
+                finite(
+                    target.y,
+                    this.position.y
+                )
         };
     }
 
@@ -357,7 +407,10 @@ export class Character {
             surface;
 
         this.currentSurfaceT =
-            finite(t, 0);
+            finite(
+                t,
+                0
+            );
 
 
         if (!surface) {
@@ -381,15 +434,19 @@ export class Character {
     }
 
 
-    updateSurfaceFromPathPoint(point) {
+    updateSurfaceFromPathPoint(
+        point
+    ) {
 
-        if (!point) {
+        if (
+            !point ||
+            !point.surface
+        ) {
             return;
         }
 
 
         if (
-            point.surface &&
             point.surface !==
             this.currentSurface
         ) {
@@ -398,24 +455,12 @@ export class Character {
                 point.surface,
                 point.t
             );
-
-            return;
-        }
-
-
-        if (point.surface) {
-
-            this.currentSurfaceT =
-                finite(
-                    point.t,
-                    this.currentSurfaceT
-                );
         }
     }
 
 
     // -----------------------------------------------------
-    // MOVEMENT
+    // UPDATE
     // -----------------------------------------------------
 
     update(dt) {
@@ -500,6 +545,10 @@ export class Character {
     }
 
 
+    // -----------------------------------------------------
+    // MOVEMENT
+    // -----------------------------------------------------
+
     updateMovement(dt) {
 
         if (
@@ -513,6 +562,7 @@ export class Character {
             this.velocity.y = 0;
 
             this.isMoving = false;
+
 
             if (
                 !this.animation.is(
@@ -535,10 +585,326 @@ export class Character {
             ];
 
 
-        this.updateSurfaceFromPathPoint(
-            waypoint
-        );
+        const stepDistance =
+            this.speed * dt;
 
+
+        /*
+         * SURFACE MOVEMENT
+         *
+         * If the waypoint belongs to
+         * the current surface, movement
+         * happens through the surface's
+         * normalized parameter t.
+         *
+         * We do NOT move in a straight
+         * XY line between points.
+         *
+         * This keeps the character attached
+         * to curved branches.
+         */
+
+        if (
+            waypoint.surface &&
+            waypoint.surface ===
+            this.currentSurface
+        ) {
+
+            const surface =
+                this.currentSurface;
+
+
+            const targetT =
+                Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        waypoint.t
+                    )
+                );
+
+
+            const currentT =
+                Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        this.currentSurfaceT
+                    )
+                );
+
+
+            const currentDistance =
+                surface.tToDistance(
+                    currentT
+                );
+
+
+            const targetDistance =
+                surface.tToDistance(
+                    targetT
+                );
+
+
+            const remaining =
+                targetDistance -
+                currentDistance;
+
+
+            const absoluteRemaining =
+                Math.abs(
+                    remaining
+                );
+
+
+            /*
+             * Reached waypoint.
+             */
+
+            if (
+                absoluteRemaining <=
+                Math.max(
+                    0.001,
+                    stepDistance
+                )
+            ) {
+
+                const frame =
+                    surface.getFrame(
+                        targetT
+                    );
+
+
+                this.position.x =
+                    frame.position.x;
+
+                this.position.y =
+                    frame.position.y;
+
+
+                this.currentSurfaceT =
+                    targetT;
+
+
+                this.velocity.x = 0;
+
+                this.velocity.y = 0;
+
+
+                this.pathIndex++;
+
+
+                if (
+                    this.pathIndex >=
+                    this.path.length
+                ) {
+
+                    this.clearPath();
+                }
+
+
+                return;
+            }
+
+
+            /*
+             * Move along surface arc length.
+             */
+
+            const directionT =
+                remaining > 0
+                    ? 1
+                    : -1;
+
+
+            const nextDistance =
+                currentDistance +
+                directionT *
+                stepDistance;
+
+
+            const nextT =
+                surface.distanceToT(
+                    nextDistance
+                );
+
+
+            const frame =
+                surface.getFrame(
+                    nextT
+                );
+
+
+            const previousPosition = {
+
+                x:
+                    this.position.x,
+
+                y:
+                    this.position.y
+            };
+
+
+            /*
+             * IMPORTANT:
+             *
+             * Position comes directly
+             * from the surface.
+             */
+
+            this.position.x =
+                frame.position.x;
+
+            this.position.y =
+                frame.position.y;
+
+
+            this.currentSurfaceT =
+                nextT;
+
+
+            /*
+             * Velocity is derived from
+             * actual world displacement.
+             */
+
+            const moveDx =
+                this.position.x -
+                previousPosition.x;
+
+            const moveDy =
+                this.position.y -
+                previousPosition.y;
+
+
+            const actualStep =
+                Math.hypot(
+                    moveDx,
+                    moveDy
+                );
+
+
+            if (
+                actualStep >
+                0.000001 &&
+                dt > 0.000001
+            ) {
+
+                this.velocity.x =
+                    moveDx / dt;
+
+                this.velocity.y =
+                    moveDy / dt;
+            }
+            else {
+
+                this.velocity.x =
+                    frame.tangent.x *
+                    this.speed *
+                    directionT;
+
+                this.velocity.y =
+                    frame.tangent.y *
+                    this.speed *
+                    directionT;
+            }
+
+
+            /*
+             * Movement orientation follows
+             * the actual surface tangent.
+             */
+
+            this.targetMoveAngle =
+                Math.atan2(
+                    frame.tangent.y *
+                    directionT,
+
+                    frame.tangent.x *
+                    directionT
+                );
+
+
+            return;
+        }
+
+
+        /*
+         * SURFACE TRANSITION
+         *
+         * When the next waypoint belongs
+         * to another surface, move directly
+         * to the transition point.
+         */
+
+        if (
+            waypoint.surface &&
+            waypoint.surface !==
+            this.currentSurface
+        ) {
+
+            this.updateSurfaceFromPathPoint(
+                waypoint
+            );
+
+
+            const frame =
+                waypoint.surface.getFrame(
+                    waypoint.t
+                );
+
+
+            this.position.x =
+                frame.position.x;
+
+            this.position.y =
+                frame.position.y;
+
+
+            this.currentSurfaceT =
+                Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        waypoint.t
+                    )
+                );
+
+
+            this.velocity.x = 0;
+
+            this.velocity.y = 0;
+
+
+            this.targetMoveAngle =
+                Math.atan2(
+                    frame.tangent.y,
+                    frame.tangent.x
+                );
+
+
+            this.pathIndex++;
+
+
+            if (
+                this.pathIndex >=
+                this.path.length
+            ) {
+
+                this.clearPath();
+            }
+
+
+            return;
+        }
+
+
+        /*
+         * NON-SURFACE MOVEMENT
+         *
+         * Fallback for ordinary world-space
+         * navigation points.
+         */
 
         const dx =
             waypoint.x -
@@ -559,12 +925,13 @@ export class Character {
         const reachDistance =
             Math.max(
                 4,
-                this.speed * dt
+                stepDistance
             );
 
 
         if (
-            d <= reachDistance
+            d <=
+            reachDistance
         ) {
 
             this.position.x =
@@ -601,14 +968,18 @@ export class Character {
             normalize(
                 dx,
                 dy,
-                Math.cos(this.moveAngle),
-                Math.sin(this.moveAngle)
+                Math.cos(
+                    this.moveAngle
+                ),
+                Math.sin(
+                    this.moveAngle
+                )
             );
 
 
         const step =
             Math.min(
-                this.speed * dt,
+                stepDistance,
                 d
             );
 
@@ -636,23 +1007,6 @@ export class Character {
                 direction.y,
                 direction.x
             );
-
-
-        // If the path point belongs to a surface,
-        // keep surface parameter synchronized.
-
-        if (
-            waypoint.surface
-        ) {
-
-            this.currentSurface =
-                waypoint.surface;
-
-            this.currentSurfaceT =
-                waypoint.surface.projectT(
-                    this.position
-                );
-        }
     }
 
 
@@ -667,8 +1021,10 @@ export class Character {
     ) {
 
         if (
-            Math.abs(dx) > 0.0001 ||
-            Math.abs(dy) > 0.0001
+            Math.abs(dx) >
+                0.0001 ||
+            Math.abs(dy) >
+                0.0001
         ) {
 
             this.targetMoveAngle =
@@ -686,34 +1042,11 @@ export class Character {
                 this.turnSpeed,
                 dt
             );
-
-
-        if (
-            Math.abs(
-                shortestAngleDelta(
-                    this.moveAngle,
-                    this.targetMoveAngle
-                )
-            ) > 0.08 &&
-            this.isMoving
-        ) {
-
-            if (
-                this.animation.is(
-                    ANIMATION_STATES.WALK
-                )
-            ) {
-
-                // Keep walking state.
-                // Turning is represented continuously
-                // through the body angle.
-            }
-        }
     }
 
 
     // -----------------------------------------------------
-    // HEAD / UPPER BODY LOOK
+    // LOOK
     // -----------------------------------------------------
 
     updateLook(dt) {
@@ -771,13 +1104,11 @@ export class Character {
             this.position.y
         );
 
+
         this.skeleton.setRootAngle(
             this.moveAngle
         );
 
-
-        // Upper body follows look direction.
-        // Skeleton handles local/world conversion.
 
         const lookOffset =
             shortestAngleDelta(
@@ -864,9 +1195,11 @@ export class Character {
 
         let normal = {
 
-            x: -tangent.y,
+            x:
+                -tangent.y,
 
-            y: tangent.x
+            y:
+                tangent.x
         };
 
 
@@ -888,13 +1221,21 @@ export class Character {
 
         const result =
             this.gait.update(
+
                 dt,
+
                 travelledDistance,
+
                 this.position,
+
                 tangent,
+
                 normal,
+
                 this.currentSurface,
+
                 this.currentSurfaceT,
+
                 this.isMoving
             );
 
@@ -934,46 +1275,34 @@ export class Character {
             );
 
 
-        if (!leftHip || !rightHip) {
+        if (
+            !leftHip ||
+            !rightHip
+        ) {
             return;
         }
 
-
-        const leftPole =
-            this.makeKneePole(
-                "left"
-            );
-
-        const rightPole =
-            this.makeKneePole(
-                "right"
-            );
-
-
-        // -----------------------------------------------
-        // Left leg
-        // -----------------------------------------------
 
         this.solveLeg(
             "hipL",
             "kneeL",
             "ankleL",
             this.footTargets.left,
-            leftPole,
+            this.makeKneePole(
+                "left"
+            ),
             "left"
         );
 
-
-        // -----------------------------------------------
-        // Right leg
-        // -----------------------------------------------
 
         this.solveLeg(
             "hipR",
             "kneeR",
             "ankleR",
             this.footTargets.right,
-            rightPole,
+            this.makeKneePole(
+                "right"
+            ),
             "right"
         );
     }
@@ -1009,7 +1338,6 @@ export class Character {
             !knee ||
             !ankle
         ) {
-
             return;
         }
 
@@ -1017,11 +1345,6 @@ export class Character {
         const hipPosition =
             hip.getWorldPosition();
 
-
-        // Actual skeleton segment lengths.
-        //
-        // hip -> knee
-        // knee -> ankle
 
         const upperLength =
             Math.max(
@@ -1081,7 +1404,6 @@ export class Character {
         this.skeleton.updateWorldTransforms();
 
 
-        // Keep foot attached to ankle orientation.
         const foot =
             this.skeleton.getBone(
                 side === "left"
@@ -1097,28 +1419,40 @@ export class Character {
     }
 
 
+    // -----------------------------------------------------
+    // KNEE POLE
+    // -----------------------------------------------------
+
     makeKneePole(side) {
 
-        const tangent = {
+        let normal = {
 
             x:
-                Math.cos(
+                -Math.sin(
                     this.moveAngle
                 ),
 
             y:
-                Math.sin(
+                Math.cos(
                     this.moveAngle
                 )
         };
 
 
-        const normal = {
+        /*
+         * On a surface the knee direction
+         * follows the actual surface normal,
+         * not the character's previous movement
+         * angle.
+         */
 
-            x: -tangent.y,
+        if (this.currentSurface) {
 
-            y: tangent.x
-        };
+            normal =
+                this.currentSurface.getNormal(
+                    this.currentSurfaceT
+                );
+        }
 
 
         const sideSign =
@@ -1148,13 +1482,22 @@ export class Character {
     // EXTERNAL CONTROL
     // -----------------------------------------------------
 
-    setPosition(x, y) {
+    setPosition(
+        x,
+        y
+    ) {
 
         this.position.x =
-            finite(x, this.position.x);
+            finite(
+                x,
+                this.position.x
+            );
 
         this.position.y =
-            finite(y, this.position.y);
+            finite(
+                y,
+                this.position.y
+            );
 
 
         this.skeleton.setRootPosition(
@@ -1173,8 +1516,12 @@ export class Character {
             normalize(
                 x,
                 y,
-                Math.cos(this.moveAngle),
-                Math.sin(this.moveAngle)
+                Math.cos(
+                    this.moveAngle
+                ),
+                Math.sin(
+                    this.moveAngle
+                )
             );
 
 
@@ -1195,8 +1542,12 @@ export class Character {
             normalize(
                 x,
                 y,
-                Math.cos(this.lookAngle),
-                Math.sin(this.lookAngle)
+                Math.cos(
+                    this.lookAngle
+                ),
+                Math.sin(
+                    this.lookAngle
+                )
             );
 
 
@@ -1217,43 +1568,58 @@ export class Character {
     }
 
 
+    // -----------------------------------------------------
+    // RESET
+    // -----------------------------------------------------
+
     reset() {
 
         this.position.x = 0;
 
         this.position.y = 0;
 
+
         this.moveAngle = 0;
 
         this.lookAngle = 0;
+
 
         this.targetMoveAngle = 0;
 
         this.targetLookAngle = 0;
 
+
         this.velocity.x = 0;
 
         this.velocity.y = 0;
 
+
         this.travelledDistance = 0;
+
 
         this.path = [];
 
         this.pathIndex = 0;
 
+
         this.currentSurface = null;
 
         this.currentSurfaceT = 0;
 
+
         this.lookTarget = null;
 
+
         this.isMoving = false;
+
 
         this.gait.reset();
 
         this.animation.reset();
 
+
         this.skeleton.resetPose();
+
 
         this.skeleton.setRootPosition(
             0,
@@ -1264,7 +1630,9 @@ export class Character {
             0
         );
 
+
         this.skeleton.updateWorldTransforms();
+
 
         this.initialized = false;
     }
@@ -1284,9 +1652,11 @@ export class Character {
 
         return {
 
-            x: this.position.x,
+            x:
+                this.position.x,
 
-            y: this.position.y
+            y:
+                this.position.y
         };
     }
 
@@ -1295,9 +1665,11 @@ export class Character {
 
         return {
 
-            x: this.velocity.x,
+            x:
+                this.velocity.x,
 
-            y: this.velocity.y
+            y:
+                this.velocity.y
         };
     }
 
@@ -1307,17 +1679,29 @@ export class Character {
         return {
 
             left: {
-                x: this.footTargets.left.x,
-                y: this.footTargets.left.y
+
+                x:
+                    this.footTargets.left.x,
+
+                y:
+                    this.footTargets.left.y
             },
 
             right: {
-                x: this.footTargets.right.x,
-                y: this.footTargets.right.y
+
+                x:
+                    this.footTargets.right.x,
+
+                y:
+                    this.footTargets.right.y
             }
         };
     }
 
+
+    // -----------------------------------------------------
+    // VALIDATION
+    // -----------------------------------------------------
 
     validate() {
 
@@ -1329,17 +1713,24 @@ export class Character {
 
             valid:
                 skeletonValid.valid &&
-                finite(this.position.x) &&
-                finite(this.position.y),
+                finite(
+                    this.position.x
+                ) &&
+                finite(
+                    this.position.y
+                ),
 
             skeleton:
                 skeletonValid,
 
-            position:
-                {
-                    x: this.position.x,
-                    y: this.position.y
-                },
+            position: {
+
+                x:
+                    this.position.x,
+
+                y:
+                    this.position.y
+            },
 
             state:
                 this.animation.snapshot()
