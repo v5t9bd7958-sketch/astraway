@@ -44,6 +44,8 @@ export class World {
 
         this.onInteraction = null;
         this.onTargetChanged = null;
+
+        this._lastInteractionTarget = null;
     }
 
 
@@ -138,7 +140,9 @@ export class World {
         const high = this.getSurface('high');
 
         if (!root || !upper || !high) {
-            throw new Error('ASTRAWAY: поверхности не созданы.');
+            throw new Error(
+                'ASTRAWAY: поверхности не созданы.'
+            );
         }
 
 
@@ -182,16 +186,15 @@ export class World {
 
         const node = this.navigation.addNode(
             id,
-            point,
-            surface,
-            t,
             {
+                x: point.x,
+                y: point.y,
+                surface,
+                t,
                 radius: options.radius ?? 36,
                 tags: options.tags ?? []
             }
         );
-
-        this.navigation.registerSurfaceNode(surface.id, id);
 
         return node;
     }
@@ -264,15 +267,20 @@ export class World {
             position,
             radius: 42,
             requiredDistance: 34,
+
             action: (context) => {
 
-                this.handleInteraction(id, context);
+                this.handleInteraction(
+                    id,
+                    context
+                );
 
                 return {
                     success: true,
                     id
                 };
             },
+
             data: {
                 label,
                 surfaceId: surface.id,
@@ -291,36 +299,81 @@ export class World {
         switch (id) {
 
             case 'bud':
-                this.questSystem.setFlag('bud_found', true);
-                this.questSystem.completeStep('astraway_intro', 'bud');
+                this.questSystem.setFlag(
+                    'bud_found',
+                    true
+                );
+
+                this.questSystem.completeStep(
+                    'astraway_intro',
+                    'bud'
+                );
                 break;
+
 
             case 'growth':
-                this.questSystem.setFlag('growth_found', true);
-                this.questSystem.completeStep('astraway_intro', 'growth');
+                this.questSystem.setFlag(
+                    'growth_found',
+                    true
+                );
+
+                this.questSystem.completeStep(
+                    'astraway_intro',
+                    'growth'
+                );
                 break;
+
 
             case 'eye':
-                this.questSystem.setFlag('eye_found', true);
-                this.questSystem.completeStep('astraway_intro', 'eye');
+                this.questSystem.setFlag(
+                    'eye_found',
+                    true
+                );
+
+                this.questSystem.completeStep(
+                    'astraway_intro',
+                    'eye'
+                );
                 break;
+
 
             case 'seed':
-                this.questSystem.setFlag('seed_found', true);
-                this.questSystem.completeStep('astraway_intro', 'seed');
+                this.questSystem.setFlag(
+                    'seed_found',
+                    true
+                );
+
+                this.questSystem.completeStep(
+                    'astraway_intro',
+                    'seed'
+                );
                 break;
 
+
             case 'door':
-                this.questSystem.setFlag('door_found', true);
-                this.questSystem.completeStep('astraway_intro', 'door');
+                this.questSystem.setFlag(
+                    'door_found',
+                    true
+                );
+
+                this.questSystem.completeStep(
+                    'astraway_intro',
+                    'door'
+                );
                 break;
+
 
             default:
                 break;
         }
 
+
         if (typeof this.onInteraction === 'function') {
-            this.onInteraction(id, context);
+
+            this.onInteraction(
+                id,
+                context
+            );
         }
     }
 
@@ -331,6 +384,7 @@ export class World {
             'astraway_intro',
             {
                 title: 'Путь открыт',
+
                 steps: [
                     {
                         id: 'bud',
@@ -356,7 +410,9 @@ export class World {
             }
         );
 
-        this.questSystem.startQuest('astraway_intro');
+        this.questSystem.startQuest(
+            'astraway_intro'
+        );
     }
 
 
@@ -365,11 +421,15 @@ export class World {
         const root = this.getSurface('root');
 
         if (!root) {
-            throw new Error('ASTRAWAY: главная поверхность отсутствует.');
+            throw new Error(
+                'ASTRAWAY: главная поверхность отсутствует.'
+            );
         }
 
         const startT = 0.05;
-        const startPoint = root.getPoint(startT);
+
+        const startPoint =
+            root.getPoint(startT);
 
         this.character.initialize(
             startPoint,
@@ -399,7 +459,10 @@ export class World {
 
     update(dt) {
 
-        if (!this.initialized || !this.started) {
+        if (
+            !this.initialized ||
+            !this.started
+        ) {
             return;
         }
 
@@ -407,14 +470,26 @@ export class World {
 
         this.interactionSystem.update(dt);
 
-        const target = this.interactionSystem.getCurrentTarget();
+        const target =
+            this.interactionSystem
+                .getCurrentTarget();
 
-        if (target !== this._lastInteractionTarget) {
 
-            this._lastInteractionTarget = target;
+        if (
+            target !==
+            this._lastInteractionTarget
+        ) {
 
-            if (typeof this.onTargetChanged === 'function') {
-                this.onTargetChanged(target);
+            this._lastInteractionTarget =
+                target;
+
+            if (
+                typeof this.onTargetChanged ===
+                'function'
+            ) {
+                this.onTargetChanged(
+                    target
+                );
             }
         }
     }
@@ -426,12 +501,16 @@ export class World {
             return false;
         }
 
-        const path = this.pathfinder.findPath(
-            this.character.getWorldPosition(),
-            worldPoint
-        );
+        const path =
+            this.pathfinder.findPath(
+                this.character.getWorldPosition(),
+                worldPoint
+            );
 
-        if (!path || path.length === 0) {
+        if (
+            !path ||
+            path.length === 0
+        ) {
             return false;
         }
 
@@ -447,9 +526,10 @@ export class World {
             return false;
         }
 
-        return this.interactionSystem.requestInteractionAt(
-            worldPoint
-        );
+        return this.interactionSystem
+            .requestInteractionAt(
+                worldPoint
+            );
     }
 
 
@@ -461,18 +541,23 @@ export class World {
 
 
         const interactionTarget =
-            this.interactionSystem.findTarget(worldPoint);
+            this.interactionSystem.findTarget(
+                worldPoint
+            );
 
 
         if (interactionTarget) {
 
-            return this.interactionSystem.requestInteraction(
-                interactionTarget
-            );
+            return this.interactionSystem
+                .requestInteraction(
+                    interactionTarget
+                );
         }
 
 
-        return this.moveCharacterTo(worldPoint);
+        return this.moveCharacterTo(
+            worldPoint
+        );
     }
 
 
@@ -484,19 +569,23 @@ export class World {
 
     getCameraTarget() {
 
-        return this.character.getWorldPosition();
+        return this.character
+            .getWorldPosition();
     }
 
 
     getSurfaces() {
 
-        return Array.from(this.surfaces.values());
+        return [
+            ...this.surfaces.values()
+        ];
     }
 
 
     getInteractionNodes() {
 
-        return this.interactionSystem.getAllNodes();
+        return this.interactionSystem
+            .getAllNodes();
     }
 
 
@@ -504,13 +593,22 @@ export class World {
 
         const errors = [];
 
-        for (const surface of this.surfaces.values()) {
 
-            if (typeof surface.validate === 'function') {
+        for (
+            const surface of
+            this.surfaces.values()
+        ) {
 
-                const result = surface.validate();
+            if (
+                typeof surface.validate ===
+                'function'
+            ) {
+
+                const result =
+                    surface.validate();
 
                 if (result !== true) {
+
                     errors.push({
                         type: 'surface',
                         id: surface.id,
@@ -521,11 +619,16 @@ export class World {
         }
 
 
-        if (typeof this.navigation.validate === 'function') {
+        if (
+            typeof this.navigation.validate ===
+            'function'
+        ) {
 
-            const result = this.navigation.validate();
+            const result =
+                this.navigation.validate();
 
             if (result !== true) {
+
                 errors.push({
                     type: 'navigation',
                     result
@@ -534,11 +637,16 @@ export class World {
         }
 
 
-        if (typeof this.character.validate === 'function') {
+        if (
+            typeof this.character.validate ===
+            'function'
+        ) {
 
-            const result = this.character.validate();
+            const result =
+                this.character.validate();
 
             if (result !== true) {
+
                 errors.push({
                     type: 'character',
                     result
@@ -547,11 +655,16 @@ export class World {
         }
 
 
-        if (typeof this.interactionSystem.validate === 'function') {
+        if (
+            typeof this.interactionSystem.validate ===
+            'function'
+        ) {
 
-            const result = this.interactionSystem.validate();
+            const result =
+                this.interactionSystem.validate();
 
             if (result !== true) {
+
                 errors.push({
                     type: 'interaction',
                     result
@@ -560,11 +673,16 @@ export class World {
         }
 
 
-        if (typeof this.questSystem.validate === 'function') {
+        if (
+            typeof this.questSystem.validate ===
+            'function'
+        ) {
 
-            const result = this.questSystem.validate();
+            const result =
+                this.questSystem.validate();
 
             if (result !== true) {
+
                 errors.push({
                     type: 'quest',
                     result
@@ -586,24 +704,35 @@ export class World {
             initialized: this.initialized,
             started: this.started,
 
-            surfaces: this.getSurfaces().map(surface => {
+            surfaces:
+                this.getSurfaces()
+                    .map(surface => {
 
-                return typeof surface.snapshot === 'function'
-                    ? surface.snapshot()
-                    : {
-                        id: surface.id,
-                        name: surface.name
-                    };
-            }),
+                        return typeof surface.snapshot ===
+                            'function'
+
+                            ? surface.snapshot()
+
+                            : {
+                                id: surface.id,
+                                name: surface.name
+                            };
+                    }),
 
             character:
-                typeof this.character.getState === 'function'
+                typeof this.character.getState ===
+                'function'
+
                     ? this.character.getState()
+
                     : null,
 
             quest:
-                typeof this.questSystem.snapshot === 'function'
+                typeof this.questSystem.snapshot ===
+                'function'
+
                     ? this.questSystem.snapshot()
+
                     : null
         };
     }
@@ -612,7 +741,8 @@ export class World {
 
 export function createWorld(options = {}) {
 
-    const world = new World(options);
+    const world =
+        new World(options);
 
     world.initialize();
 
