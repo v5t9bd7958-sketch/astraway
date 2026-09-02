@@ -78,8 +78,12 @@ export class Game {
         });
 
 
+        const startTarget =
+            this.world.getCameraTarget();
+
         this.camera.setPosition(
-            this.world.getCameraTarget()
+            startTarget.x,
+            startTarget.y
         );
 
 
@@ -164,8 +168,14 @@ export class Game {
         this.world.initialize();
 
 
-        this.camera.reset(
-            this.world.getCameraTarget()
+        this.camera.reset();
+
+        const restartTarget =
+            this.world.getCameraTarget();
+
+        this.camera.setPosition(
+            restartTarget.x,
+            restartTarget.y
         );
 
 
