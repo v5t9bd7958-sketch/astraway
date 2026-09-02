@@ -2,17 +2,19 @@
 // Surface / Branch geometry
 //
 // A walkable surface is represented by a polyline.
-// Each point has:
-//   - world position
-//   - tangent
-//   - normal
-//   - cumulative distance
 //
-// The character can therefore query:
-//   t -> position
-//   t -> tangent
-//   t -> normal
-//   world point -> nearest t
+// The surface provides:
+//   - world position
+//   - continuous tangent
+//   - continuous normal
+//   - cumulative distance
+//   - nearest-point projection
+//
+// IMPORTANT:
+// Geometry remains a polyline.
+// Frames are smoothed independently so that
+// character orientation and IK do not snap
+// at sharp segment boundaries.
 
 import {
     EPSILON,
@@ -37,11 +39,9 @@ export class Surface {
                 .toString(36)
                 .slice(2, 9)}`;
 
-
         this.name =
             options.name ||
             this.id;
-
 
         this.width =
             Math.max(
@@ -49,13 +49,14 @@ export class Surface {
                 finite(options.width, 40)
             );
 
-
         this.points = [];
-
         this.segments = [];
 
-        this.totalLength = 0;
+        // Continuous frame data at each
+        // original polyline vertex.
+        this.vertexFrames = [];
 
+        this.totalLength = 0;
 
         if (
             Array.isArray(
@@ -91,13 +92,10 @@ export class Surface {
             this.points.push({
 
                 x: point.x,
-
                 y: point.y,
-
                 distance: 0
             });
         }
-
 
         this.rebuild();
 
@@ -114,16 +112,12 @@ export class Surface {
             return this;
         }
 
-
         this.points.push({
 
             x,
-
             y,
-
             distance: 0
         });
-
 
         this.rebuild();
 
@@ -138,11 +132,13 @@ export class Surface {
     rebuild() {
 
         this.segments = [];
-
+        this.vertexFrames = [];
         this.totalLength = 0;
 
 
-        if (this.points.length === 0) {
+        if (
+            this.points.length === 0
+        ) {
             return;
         }
 
@@ -151,7 +147,7 @@ export class Surface {
 
 
         // -----------------------------------------------
-        // Calculate cumulative distances
+        // Cumulative distances
         // -----------------------------------------------
 
         for (
@@ -166,17 +162,14 @@ export class Surface {
             const current =
                 this.points[i];
 
-
             const segmentLength =
                 distance(
                     previous,
                     current
                 );
 
-
             this.totalLength +=
                 segmentLength;
-
 
             current.distance =
                 this.totalLength;
@@ -184,7 +177,7 @@ export class Surface {
 
 
         // -----------------------------------------------
-        // Build segments
+        // Build geometric segments
         // -----------------------------------------------
 
         for (
@@ -199,13 +192,11 @@ export class Surface {
             const b =
                 this.points[i + 1];
 
-
             const dx =
                 b.x - a.x;
 
             const dy =
                 b.y - a.y;
-
 
             const length =
                 Math.hypot(
@@ -214,7 +205,9 @@ export class Surface {
                 );
 
 
-            if (length < EPSILON) {
+            if (
+                length < EPSILON
+            ) {
                 continue;
             }
 
@@ -226,14 +219,6 @@ export class Surface {
                     1,
                     0
                 );
-
-
-            const normal = {
-
-                x: -tangent.y,
-
-                y: tangent.x
-            };
 
 
             this.segments.push({
@@ -258,11 +243,229 @@ export class Surface {
                 endDistance:
                     b.distance,
 
-                tangent,
-
-                normal
+                tangent
             });
         }
+
+
+        this.buildVertexFrames();
+    }
+
+
+    // -----------------------------------------------------
+    // CONTINUOUS FRAME
+    // -----------------------------------------------------
+
+    buildVertexFrames() {
+
+        this.vertexFrames = [];
+
+
+        if (
+            this.points.length === 0
+        ) {
+            return;
+        }
+
+
+        /*
+         * We derive a tangent for every original
+         * vertex.
+         *
+         * Interior vertices use the direction
+         * halfway between the incoming and
+         * outgoing directions.
+         *
+         * If the directions are almost opposite,
+         * averaging would approach zero and could
+         * produce an unstable frame. In that case
+         * we deliberately keep the incoming
+         * direction.
+         */
+
+
+        for (
+            let i = 0;
+            i < this.points.length;
+            i++
+        ) {
+
+            let tangent;
+
+
+            // First vertex.
+            if (i === 0) {
+
+                tangent =
+                    this.getSegmentTangent(
+                        0
+                    );
+            }
+
+
+            // Last vertex.
+            else if (
+                i ===
+                this.points.length - 1
+            ) {
+
+                tangent =
+                    this.getSegmentTangent(
+                        this.points.length - 2
+                    );
+            }
+
+
+            // Interior vertex.
+            else {
+
+                const incoming =
+                    this.getSegmentTangent(
+                        i - 1
+                    );
+
+                const outgoing =
+                    this.getSegmentTangent(
+                        i
+                    );
+
+
+                if (
+                    !incoming ||
+                    !outgoing
+                ) {
+
+                    tangent =
+                        incoming ||
+                        outgoing || {
+                            x: 1,
+                            y: 0
+                        };
+                }
+                else {
+
+                    const dot =
+                        incoming.x *
+                        outgoing.x +
+                        incoming.y *
+                        outgoing.y;
+
+
+                    /*
+                     * Normal case:
+                     * blend both directions.
+                     */
+                    if (
+                        dot >
+                        -0.999
+                    ) {
+
+                        const blended = {
+
+                            x:
+                                incoming.x +
+                                outgoing.x,
+
+                            y:
+                                incoming.y +
+                                outgoing.y
+                        };
+
+
+                        const length =
+                            Math.hypot(
+                                blended.x,
+                                blended.y
+                            );
+
+
+                        if (
+                            length >
+                            EPSILON
+                        ) {
+
+                            tangent =
+                                normalize(
+                                    blended.x,
+                                    blended.y,
+                                    incoming.x,
+                                    incoming.y
+                                );
+                        }
+                        else {
+
+                            tangent =
+                                incoming;
+                        }
+                    }
+
+                    /*
+                     * Near 180-degree reversal.
+                     *
+                     * Do not create a zero-length
+                     * tangent. Keep the incoming
+                     * direction stable.
+                     */
+                    else {
+
+                        tangent =
+                            incoming;
+                    }
+                }
+            }
+
+
+            tangent =
+                normalize(
+                    tangent.x,
+                    tangent.y,
+                    1,
+                    0
+                );
+
+
+            const normal = {
+
+                x: -tangent.y,
+                y: tangent.x
+            };
+
+
+            this.vertexFrames.push({
+
+                tangent: {
+                    x: tangent.x,
+                    y: tangent.y
+                },
+
+                normal: {
+                    x: normal.x,
+                    y: normal.y
+                }
+            });
+        }
+    }
+
+
+    getSegmentTangent(index) {
+
+        if (
+            index < 0 ||
+            index >= this.segments.length
+        ) {
+            return null;
+        }
+
+
+        const segment =
+            this.segments[index];
+
+
+        return {
+
+            x: segment.tangent.x,
+            y: segment.tangent.y
+        };
     }
 
 
@@ -318,8 +521,6 @@ export class Surface {
             );
 
 
-        // Fast endpoint checks.
-
         if (
             d <=
             this.segments[0]
@@ -345,27 +546,28 @@ export class Surface {
         }
 
 
-        // Binary search.
-
         let low = 0;
 
         let high =
             this.segments.length - 1;
 
 
-        while (low <= high) {
+        while (
+            low <= high
+        ) {
 
             const mid =
                 (low + high) >> 1;
-
 
             const segment =
                 this.segments[mid];
 
 
             if (
-                d >= segment.startDistance &&
-                d <= segment.endDistance
+                d >=
+                    segment.startDistance &&
+                d <=
+                    segment.endDistance
             ) {
 
                 return segment;
@@ -446,11 +648,14 @@ export class Surface {
 
         if (!segment) {
 
+            const point =
+                this.points[0];
+
             return {
 
                 position: {
-                    x: this.points[0].x,
-                    y: this.points[0].y
+                    x: point.x,
+                    y: point.y
                 },
 
                 tangent: {
@@ -476,8 +681,7 @@ export class Surface {
 
 
         const segmentT =
-            segment.length >
-            EPSILON
+            segment.length > EPSILON
                 ? clamp01(
                     localDistance /
                     segment.length
@@ -492,13 +696,83 @@ export class Surface {
                 segmentT
             );
 
-
         const y =
             lerp(
                 segment.a.y,
                 segment.b.y,
                 segmentT
             );
+
+
+        /*
+         * The geometric position remains
+         * exactly on the original segment.
+         *
+         * The frame is interpolated between
+         * the vertex frames surrounding that
+         * segment.
+         */
+
+        const startFrame =
+            this.vertexFrames[
+                segment.index
+            ];
+
+        const endFrame =
+            this.vertexFrames[
+                segment.index + 1
+            ];
+
+
+        let tangent;
+
+
+        if (
+            startFrame &&
+            endFrame
+        ) {
+
+            const blended = {
+
+                x:
+                    lerp(
+                        startFrame.tangent.x,
+                        endFrame.tangent.x,
+                        segmentT
+                    ),
+
+                y:
+                    lerp(
+                        startFrame.tangent.y,
+                        endFrame.tangent.y,
+                        segmentT
+                    )
+            };
+
+
+            tangent =
+                normalize(
+                    blended.x,
+                    blended.y,
+                    segment.tangent.x,
+                    segment.tangent.y
+                );
+        }
+        else {
+
+            tangent = {
+
+                x: segment.tangent.x,
+                y: segment.tangent.y
+            };
+        }
+
+
+        const normal = {
+
+            x: -tangent.y,
+            y: tangent.x
+        };
 
 
         return {
@@ -509,13 +783,13 @@ export class Surface {
             },
 
             tangent: {
-                x: segment.tangent.x,
-                y: segment.tangent.y
+                x: tangent.x,
+                y: tangent.y
             },
 
             normal: {
-                x: segment.normal.x,
-                y: segment.normal.y
+                x: normal.x,
+                y: normal.y
             },
 
             t: safeT,
@@ -635,6 +909,30 @@ export class Surface {
                     along;
 
 
+                const projectedT =
+                    this.distanceToT(
+                        worldDistance
+                    );
+
+
+                /*
+                 * IMPORTANT:
+                 *
+                 * Projection still uses the
+                 * exact geometric segment.
+                 *
+                 * But the returned tangent and
+                 * normal come from getFrame(),
+                 * giving callers the same smooth
+                 * frame used during movement.
+                 */
+
+                const frame =
+                    this.getFrame(
+                        projectedT
+                    );
+
+
                 best = {
 
                     point: {
@@ -643,9 +941,7 @@ export class Surface {
                     },
 
                     t:
-                        this.distanceToT(
-                            worldDistance
-                        ),
+                        projectedT,
 
                     distance:
                         Math.sqrt(
@@ -656,13 +952,19 @@ export class Surface {
                         segment.index,
 
                     tangent: {
-                        x: segment.tangent.x,
-                        y: segment.tangent.y
+                        x:
+                            frame.tangent.x,
+
+                        y:
+                            frame.tangent.y
                     },
 
                     normal: {
-                        x: segment.normal.x,
-                        y: segment.normal.y
+                        x:
+                            frame.normal.x,
+
+                        y:
+                            frame.normal.y
                     }
                 };
             }
@@ -675,7 +977,9 @@ export class Surface {
 
     projectT(point) {
 
-        return this.projectPoint(point).t;
+        return this.projectPoint(
+            point
+        ).t;
     }
 
 
@@ -813,19 +1117,47 @@ export class Surface {
                     `Invalid tangent ${segment.index}.`
                 );
             }
+        }
+
+
+        for (
+            let i = 0;
+            i < this.vertexFrames.length;
+            i++
+        ) {
+
+            const frame =
+                this.vertexFrames[i];
 
 
             if (
+                !frame ||
                 !finite(
-                    segment.normal.x
+                    frame.tangent.x
                 ) ||
                 !finite(
-                    segment.normal.y
+                    frame.tangent.y
                 )
             ) {
 
                 errors.push(
-                    `Invalid normal ${segment.index}.`
+                    `Invalid vertex tangent ${i}.`
+                );
+            }
+
+
+            if (
+                !frame ||
+                !finite(
+                    frame.normal.x
+                ) ||
+                !finite(
+                    frame.normal.y
+                )
+            ) {
+
+                errors.push(
+                    `Invalid vertex normal ${i}.`
                 );
             }
         }
