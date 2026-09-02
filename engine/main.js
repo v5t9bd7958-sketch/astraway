@@ -118,13 +118,22 @@ function restartGame() {
 }
 
 
-input.onTap = (worldPoint) => {
+input.onTap = (tapData) => {
 
     if (!game.running) {
         return;
     }
 
-    game.handleTap(worldPoint);
+    if (
+        !tapData ||
+        !tapData.world
+    ) {
+        return;
+    }
+
+    game.handleTap(
+        tapData.world
+    );
 };
 
 
