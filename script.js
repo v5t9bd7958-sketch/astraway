@@ -1,15 +1,34 @@
-// ===== ASTRA GAME ENGINE =====
+// ============================================================
+// ASTRA GAME ENGINE
 // Telegram Mini App - Hidden Object Adventure
+// Mobile-safe input version
+// ============================================================
 
 class AstraGame {
     constructor() {
+        // ===== GAME STATE =====
         this.found = 0;
         this.total = 5;
         this.objectsFound = new Set();
+
         this.soundEnabled = true;
+        this.audioCtx = null;
+        this.sounds = {};
+        this.bgMusicInterval = null;
+
+        // ===== TROLL STATE =====
         this.trollState = 'idle';
-        this.trollPos = { x: 50, y: 85 }; // Стартовая позиция (центр, у корней)
+        this.trollPos = {
+            x: 50,
+            y: 85
+        };
         this.isMoving = false;
+
+        // ===== TIMERS =====
+        this.hintTimer = null;
+        this.tapTimer = null;
+
+        // ===== HINTS =====
         this.hints = [
             "Привет! Я твой проводник. Найди 5 артефактов!",
             "Смотри внимательно... артефакты спрятаны в дереве.",
@@ -22,35 +41,92 @@ class AstraGame {
             "Осталось совсем немного!",
             "Портал откроется, когда всё найдёшь!"
         ];
-        this.currentHint = 0;
-        this.hintTimer = null;
-        this.tapTimer = null;
 
-        // Walkable зоны (проценты от фона)
+        this.currentHint = 0;
+
+        // ===== WALKABLE ZONES =====
         this.walkableZones = [
             // Центральный ствол
-            { x1: 35, y1: 20, x2: 65, y2: 90 },
+            {
+                x1: 35,
+                y1: 20,
+                x2: 65,
+                y2: 90
+            },
+
             // Левая ветка
-            { x1: 5, y1: 50, x2: 40, y2: 65 },
+            {
+                x1: 5,
+                y1: 50,
+                x2: 40,
+                y2: 65
+            },
+
             // Правая ветка
-            { x1: 55, y1: 55, x2: 95, y2: 85 },
+            {
+                x1: 55,
+                y1: 55,
+                x2: 95,
+                y2: 85
+            },
+
             // Верхние ветки
-            { x1: 10, y1: 5, x2: 90, y2: 25 },
+            {
+                x1: 10,
+                y1: 5,
+                x2: 90,
+                y2: 25
+            },
+
             // Нижние корни
-            { x1: 5, y1: 80, x2: 95, y2: 95 }
+            {
+                x1: 5,
+                y1: 80,
+                x2: 95,
+                y2: 95
+            }
         ];
 
-        // Координаты объектов (проценты)
+        // ===== OBJECTS =====
         this.objects = [
-            { id: 'obj-1', x: 84, y: 78, name: 'Горшок' },
-            { id: 'obj-2', x: 49, y: 48, name: 'Дверь' },
-            { id: 'obj-3', x: 68, y: 21, name: 'Веточка' },
-            { id: 'obj-4', x: 13, y: 85, name: 'Гриб' },
-            { id: 'obj-5', x: 10, y: 11, name: 'Цветок' }
+            {
+                id: 'obj-1',
+                x: 84,
+                y: 78,
+                name: 'Горшок'
+            },
+            {
+                id: 'obj-2',
+                x: 49,
+                y: 48,
+                name: 'Дверь'
+            },
+            {
+                id: 'obj-3',
+                x: 68,
+                y: 21,
+                name: 'Веточка'
+            },
+            {
+                id: 'obj-4',
+                x: 13,
+                y: 85,
+                name: 'Гриб'
+            },
+            {
+                id: 'obj-5',
+                x: 10,
+                y: 11,
+                name: 'Цветок'
+            }
         ];
 
         this.init();
     }
+
+    // ============================================================
+    // INIT
+    // ============================================================
 
     init() {
         this.setupTelegram();
@@ -60,472 +136,1508 @@ class AstraGame {
         this.updateCounter();
     }
 
-    // ===== TELEGRAM INTEGRATION =====
+    // ============================================================
+    // TELEGRAM
+    // ============================================================
+
     setupTelegram() {
-        if (window.Telegram && Telegram.WebApp) {
-            const tg = Telegram.WebApp;
-            tg.ready();
-            tg.expand();
-            tg.enableClosingConfirmation();
+        if (
+            window.Telegram &&
+            window.Telegram.WebApp
+        ) {
+            const tg = window.Telegram.WebApp;
 
-            // Тема
-            const theme = tg.colorScheme || 'dark';
-            document.body.classList.add(theme);
+            try {
+                tg.ready();
+                tg.expand();
 
-            // Haptic feedback
-            this.haptic = tg.HapticFeedback;
+                if (typeof tg.enableClosingConfirmation === 'function') {
+                    tg.enableClosingConfirmation();
+                }
+
+                const theme = tg.colorScheme || 'dark';
+
+                document.body.classList.add(theme);
+
+                this.haptic = tg.HapticFeedback || null;
+            } catch (error) {
+                console.log('Telegram WebApp initialization skipped.');
+            }
         }
     }
 
-    // ===== AUDIO =====
+    // ============================================================
+    // AUDIO
+    // ============================================================
+
     setupAudio() {
         this.audioCtx = null;
         this.sounds = {};
 
-        // Инициализация по первому touch (iOS требование)
-        document.addEventListener('touchstart', () => this.initAudio(), { once: true });
-        document.addEventListener('click', () => this.initAudio(), { once: true });
+        // ВАЖНО:
+        // Здесь НЕТ preventDefault().
+        // iOS требует пользовательского жеста для запуска AudioContext,
+        // поэтому достаточно обычного touch/click события.
+
+        const initAudioOnce = () => {
+            this.initAudio();
+        };
+
+        document.addEventListener(
+            'touchstart',
+            initAudioOnce,
+            {
+                once: true,
+                passive: true
+            }
+        );
+
+        document.addEventListener(
+            'click',
+            initAudioOnce,
+            {
+                once: true
+            }
+        );
     }
 
     initAudio() {
-        if (this.audioCtx) return;
+        if (this.audioCtx) {
+            return;
+        }
 
         try {
-            this.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const AudioContextClass =
+                window.AudioContext ||
+                window.webkitAudioContext;
+
+            if (!AudioContextClass) {
+                return;
+            }
+
+            this.audioCtx = new AudioContextClass();
+
+            if (this.audioCtx.state === 'suspended') {
+                this.audioCtx.resume().catch(() => {});
+            }
+
             this.loadSounds();
-        } catch(e) {
+        } catch (error) {
             console.log('Audio not available');
+            this.audioCtx = null;
         }
     }
 
     loadSounds() {
-        // Генерация звуков через Web Audio API
-        this.sounds.found = () => this.playTone(523, 0.3, 'sine'); // C5 - звон
-        this.sounds.step = () => this.playTone(150, 0.1, 'triangle', 0.1); // Шаг
-        this.sounds.tap = () => this.playTone(800, 0.15, 'square', 0.2); // Стук
-        this.sounds.win = () => this.playMelody([523, 659, 784, 1047], 0.5); // Победа
-        this.sounds.hint = () => this.playTone(400, 0.2, 'sine', 0.15); // Подсказка
-        this.sounds.portal = () => this.playDrone(200, 300, 2); // Портал
+        this.sounds.found = () => {
+            this.playTone(
+                523,
+                0.3,
+                'sine'
+            );
+        };
+
+        this.sounds.step = () => {
+            this.playTone(
+                150,
+                0.1,
+                'triangle',
+                0.1
+            );
+        };
+
+        this.sounds.tap = () => {
+            this.playTone(
+                800,
+                0.15,
+                'square',
+                0.2
+            );
+        };
+
+        this.sounds.win = () => {
+            this.playMelody(
+                [523, 659, 784, 1047],
+                0.5
+            );
+        };
+
+        this.sounds.hint = () => {
+            this.playTone(
+                400,
+                0.2,
+                'sine',
+                0.15
+            );
+        };
+
+        this.sounds.portal = () => {
+            this.playDrone(
+                200,
+                300,
+                2
+            );
+        };
     }
 
-    playTone(freq, duration, type = 'sine', volume = 0.3) {
-        if (!this.audioCtx || !this.soundEnabled) return;
+    playTone(
+        freq,
+        duration,
+        type = 'sine',
+        volume = 0.3
+    ) {
+        if (
+            !this.audioCtx ||
+            !this.soundEnabled
+        ) {
+            return;
+        }
 
-        const osc = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
+        try {
+            if (this.audioCtx.state === 'suspended') {
+                this.audioCtx.resume().catch(() => {});
+            }
 
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, this.audioCtx.currentTime);
+            const osc =
+                this.audioCtx.createOscillator();
 
-        gain.gain.setValueAtTime(volume, this.audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + duration);
+            const gain =
+                this.audioCtx.createGain();
 
-        osc.connect(gain);
-        gain.connect(this.audioCtx.destination);
+            const now =
+                this.audioCtx.currentTime;
 
-        osc.start();
-        osc.stop(this.audioCtx.currentTime + duration);
+            osc.type = type;
+
+            osc.frequency.setValueAtTime(
+                freq,
+                now
+            );
+
+            gain.gain.setValueAtTime(
+                volume,
+                now
+            );
+
+            gain.gain.exponentialRampToValueAtTime(
+                0.01,
+                now + duration
+            );
+
+            osc.connect(gain);
+            gain.connect(
+                this.audioCtx.destination
+            );
+
+            osc.start(now);
+            osc.stop(
+                now + duration
+            );
+        } catch (error) {
+            // Audio failure must never stop the game.
+        }
     }
 
     playMelody(notes, duration) {
-        notes.forEach((note, i) => {
-            setTimeout(() => this.playTone(note, duration, 'sine', 0.3), i * 200);
+        if (!this.audioCtx || !this.soundEnabled) {
+            return;
+        }
+
+        notes.forEach((note, index) => {
+            setTimeout(() => {
+                this.playTone(
+                    note,
+                    duration,
+                    'sine',
+                    0.3
+                );
+            }, index * 200);
         });
     }
 
-    playDrone(low, high, duration) {
-        if (!this.audioCtx || !this.soundEnabled) return;
+    playDrone(
+        low,
+        high,
+        duration
+    ) {
+        if (
+            !this.audioCtx ||
+            !this.soundEnabled
+        ) {
+            return;
+        }
 
-        const osc1 = this.audioCtx.createOscillator();
-        const osc2 = this.audioCtx.createOscillator();
-        const gain = this.audioCtx.createGain();
+        try {
+            const osc1 =
+                this.audioCtx.createOscillator();
 
-        osc1.type = 'sine';
-        osc1.frequency.setValueAtTime(low, this.audioCtx.currentTime);
+            const osc2 =
+                this.audioCtx.createOscillator();
 
-        osc2.type = 'sine';
-        osc2.frequency.setValueAtTime(high, this.audioCtx.currentTime);
+            const gain =
+                this.audioCtx.createGain();
 
-        gain.gain.setValueAtTime(0.2, this.audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, this.audioCtx.currentTime + duration);
+            const now =
+                this.audioCtx.currentTime;
 
-        osc1.connect(gain);
-        osc2.connect(gain);
-        gain.connect(this.audioCtx.destination);
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(
+                low,
+                now
+            );
 
-        osc1.start();
-        osc2.start();
-        osc1.stop(this.audioCtx.currentTime + duration);
-        osc2.stop(this.audioCtx.currentTime + duration);
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(
+                high,
+                now
+            );
+
+            gain.gain.setValueAtTime(
+                0.2,
+                now
+            );
+
+            gain.gain.exponentialRampToValueAtTime(
+                0.01,
+                now + duration
+            );
+
+            osc1.connect(gain);
+            osc2.connect(gain);
+
+            gain.connect(
+                this.audioCtx.destination
+            );
+
+            osc1.start(now);
+            osc2.start(now);
+
+            osc1.stop(
+                now + duration
+            );
+
+            osc2.stop(
+                now + duration
+            );
+        } catch (error) {
+            // Ignore audio errors.
+        }
     }
 
-    // ===== EVENT LISTENERS =====
+    // ============================================================
+    // EVENT LISTENERS
+    // ============================================================
+
     setupEventListeners() {
-        // Стартовый экран
-        document.getElementById('start-btn').addEventListener('click', () => this.startGame());
+        const startButton =
+            document.getElementById('start-btn');
 
-        // Клик/тап по фону - движение тролля
-        document.getElementById('game-container').addEventListener('click', (e) => this.handleTap(e));
-        document.getElementById('game-container').addEventListener('touchstart', (e) => {
-            e.preventDefault();
-            this.handleTap(e.touches[0]);
-        }, { passive: false });
+        const backgroundLayer =
+            document.getElementById('background-layer');
 
-        // Объекты
-        this.objects.forEach(obj => {
-            const el = document.getElementById(obj.id);
-            if (el) {
-                el.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this.findObject(obj.id);
-                });
+        const hintButton =
+            document.getElementById('hint-button');
+
+        const soundButton =
+            document.getElementById('sound-toggle');
+
+        const restartButton =
+            document.getElementById('restart-btn');
+
+        // --------------------------------------------------------
+        // START
+        // --------------------------------------------------------
+
+        if (startButton) {
+            startButton.addEventListener(
+                'click',
+                (event) => {
+                    event.stopPropagation();
+                    this.startGame();
+                }
+            );
+        }
+
+        // --------------------------------------------------------
+        // MOVEMENT
+        // --------------------------------------------------------
+        //
+        // КЛЮЧЕВАЯ ИСПРАВЛЕННАЯ ЧАСТЬ.
+        //
+        // Раньше touchstart висел на game-container
+        // и делал preventDefault().
+        //
+        // На iPhone это могло подавлять последующий click
+        // стартовой кнопки.
+        //
+        // Теперь движение получает только background-layer.
+        // Кнопки и объекты находятся поверх него и не конфликтуют.
+        //
+
+        if (backgroundLayer) {
+            backgroundLayer.addEventListener(
+                'pointerup',
+                (event) => {
+                    if (
+                        event.pointerType === 'mouse' &&
+                        event.button !== 0
+                    ) {
+                        return;
+                    }
+
+                    this.handleTap(event);
+                }
+            );
+        }
+
+        // --------------------------------------------------------
+        // OBJECTS
+        // --------------------------------------------------------
+
+        this.objects.forEach((obj) => {
+            const element =
+                document.getElementById(obj.id);
+
+            if (!element) {
+                return;
             }
+
+            element.addEventListener(
+                'click',
+                (event) => {
+                    event.stopPropagation();
+                    this.findObject(obj.id);
+                }
+            );
+
+            // Для мобильного устройства:
+            // pointerup также должен работать,
+            // но не вызываем findObject дважды.
+            element.addEventListener(
+                'pointerup',
+                (event) => {
+                    event.stopPropagation();
+                }
+            );
         });
 
-        // UI кнопки
-        document.getElementById('hint-button').addEventListener('click', () => this.showHint());
-        document.getElementById('sound-toggle').addEventListener('click', () => this.toggleSound());
-        document.getElementById('restart-btn').addEventListener('click', () => this.restart());
+        // --------------------------------------------------------
+        // UI
+        // --------------------------------------------------------
+
+        if (hintButton) {
+            hintButton.addEventListener(
+                'click',
+                (event) => {
+                    event.stopPropagation();
+                    this.showHint();
+                }
+            );
+        }
+
+        if (soundButton) {
+            soundButton.addEventListener(
+                'click',
+                (event) => {
+                    event.stopPropagation();
+                    this.toggleSound();
+                }
+            );
+        }
+
+        if (restartButton) {
+            restartButton.addEventListener(
+                'click',
+                (event) => {
+                    event.stopPropagation();
+                    this.restart();
+                }
+            );
+        }
     }
 
-    // ===== GAME LOGIC =====
+    // ============================================================
+    // START GAME
+    // ============================================================
+
     startGame() {
-        document.getElementById('start-screen').classList.add('hidden');
+        const startScreen =
+            document.getElementById('start-screen');
+
+        if (startScreen) {
+            startScreen.classList.add('hidden');
+        }
+
         this.initAudio();
-        this.showSpeech(this.hints[0], 4000);
+
+        this.showSpeech(
+            this.hints[0],
+            4000
+        );
+
         this.startBackgroundMusic();
     }
 
-    handleTap(e) {
-        if (this.isMoving) return;
+    // ============================================================
+    // INPUT / MOVEMENT
+    // ============================================================
 
-        const container = document.getElementById('game-container');
-        const rect = container.getBoundingClientRect();
+    handleTap(event) {
+        if (this.isMoving) {
+            return;
+        }
 
-        const x = ((e.clientX || e.pageX) - rect.left) / rect.width * 100;
-        const y = ((e.clientY || e.pageY) - rect.top) / rect.height * 100;
+        if (!event) {
+            return;
+        }
 
-        // Проверяем, что точка в walkable-зоне
-        const nearestPoint = this.findNearestWalkable(x, y);
+        const container =
+            document.getElementById('game-container');
+
+        if (!container) {
+            return;
+        }
+
+        const rect =
+            container.getBoundingClientRect();
+
+        if (
+            rect.width <= 0 ||
+            rect.height <= 0
+        ) {
+            return;
+        }
+
+        const clientX =
+            typeof event.clientX === 'number'
+                ? event.clientX
+                : null;
+
+        const clientY =
+            typeof event.clientY === 'number'
+                ? event.clientY
+                : null;
+
+        if (
+            clientX === null ||
+            clientY === null
+        ) {
+            return;
+        }
+
+        const x =
+            ((clientX - rect.left) /
+                rect.width) *
+            100;
+
+        const y =
+            ((clientY - rect.top) /
+                rect.height) *
+            100;
+
+        const safeX =
+            Math.max(
+                0,
+                Math.min(100, x)
+            );
+
+        const safeY =
+            Math.max(
+                0,
+                Math.min(100, y)
+            );
+
+        const nearestPoint =
+            this.findNearestWalkable(
+                safeX,
+                safeY
+            );
+
         if (nearestPoint) {
-            this.moveTrollTo(nearestPoint.x, nearestPoint.y);
+            this.moveTrollTo(
+                nearestPoint.x,
+                nearestPoint.y
+            );
         }
     }
 
     findNearestWalkable(x, y) {
-        // Проверяем, попадает ли точка в какую-либо зону
+        // Сначала проверяем прямое попадание.
         for (const zone of this.walkableZones) {
-            if (x >= zone.x1 && x <= zone.x2 && y >= zone.y1 && y <= zone.y2) {
-                return { x, y };
+            if (
+                x >= zone.x1 &&
+                x <= zone.x2 &&
+                y >= zone.y1 &&
+                y <= zone.y2
+            ) {
+                return {
+                    x,
+                    y
+                };
             }
         }
 
-        // Если не попала - ищем ближайшую точку на границе зон
+        // Если точка вне зон —
+        // ищем ближайшую точку на границе.
         let nearest = null;
         let minDist = Infinity;
 
         for (const zone of this.walkableZones) {
-            const cx = Math.max(zone.x1, Math.min(x, zone.x2));
-            const cy = Math.max(zone.y1, Math.min(y, zone.y2));
-            const dist = Math.sqrt((x - cx) ** 2 + (y - cy) ** 2);
+            const cx =
+                Math.max(
+                    zone.x1,
+                    Math.min(
+                        x,
+                        zone.x2
+                    )
+                );
+
+            const cy =
+                Math.max(
+                    zone.y1,
+                    Math.min(
+                        y,
+                        zone.y2
+                    )
+                );
+
+            const dx =
+                x - cx;
+
+            const dy =
+                y - cy;
+
+            const dist =
+                Math.sqrt(
+                    dx * dx +
+                    dy * dy
+                );
 
             if (dist < minDist) {
                 minDist = dist;
-                nearest = { x: cx, y: cy };
+
+                nearest = {
+                    x: cx,
+                    y: cy
+                };
             }
         }
 
         return nearest;
     }
 
-    moveTrollTo(targetX, targetY) {
-        if (this.isMoving) return;
+    // ============================================================
+    // TROLL MOVEMENT
+    // ============================================================
+
+    moveTrollTo(
+        targetX,
+        targetY
+    ) {
+        if (this.isMoving) {
+            return;
+        }
+
+        const troll =
+            document.getElementById('troll');
+
+        if (!troll) {
+            return;
+        }
+
         this.isMoving = true;
 
-        const troll = document.getElementById('troll');
-        const startX = this.trollPos.x;
-        const startY = this.trollPos.y;
+        const startX =
+            this.trollPos.x;
 
-        // Расстояние и время
-        const dist = Math.sqrt((targetX - startX) ** 2 + (targetY - startY) ** 2);
-        const duration = Math.min(dist * 15, 1500); // макс 1.5 сек
+        const startY =
+            this.trollPos.y;
 
-        // Направление (для зеркалирования)
-        const facingRight = targetX > startX;
-        troll.style.transform = `translate(-50%, -100%) scaleX(${facingRight ? 1 : -1})`;
+        const dx =
+            targetX - startX;
 
-        // Анимация ходьбы
-        this.setTrollState('walking');
+        const dy =
+            targetY - startY;
+
+        const dist =
+            Math.sqrt(
+                dx * dx +
+                dy * dy
+            );
+
+        // Если практически никуда не идём.
+        if (dist < 0.5) {
+            this.isMoving = false;
+            this.setTrollState('idle');
+            this.checkNearbyObjects();
+            return;
+        }
+
+        const duration =
+            Math.min(
+                Math.max(
+                    dist * 15,
+                    250
+                ),
+                1500
+            );
+
+        // Направление.
+        if (Math.abs(dx) > 0.5) {
+            const facingRight =
+                targetX > startX;
+
+            troll.style.transform =
+                `translate(-50%, -100%) scaleX(${facingRight ? 1 : -1})`;
+        }
+
+        this.setTrollState(
+            'walking'
+        );
+
         this.playStepSound();
 
-        // Движение
-        troll.style.transition = `left ${duration}ms cubic-bezier(0.4, 0, 0.2, 1), top ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
-        troll.style.left = targetX + '%';
-        troll.style.top = targetY + '%';
+        troll.style.transition =
+            `left ${duration}ms cubic-bezier(0.4, 0, 0.2, 1), ` +
+            `top ${duration}ms cubic-bezier(0.4, 0, 0.2, 1)`;
 
-        this.trollPos = { x: targetX, y: targetY };
+        troll.style.left =
+            targetX + '%';
+
+        troll.style.top =
+            targetY + '%';
+
+        this.trollPos = {
+            x: targetX,
+            y: targetY
+        };
 
         setTimeout(() => {
             this.isMoving = false;
-            this.setTrollState('idle');
+
+            this.setTrollState(
+                'idle'
+            );
+
             this.checkNearbyObjects();
         }, duration);
     }
 
     playStepSound() {
-        if (!this.soundEnabled) return;
-        const steps = Math.floor(Math.random() * 3) + 3;
-        for (let i = 0; i < steps; i++) {
+        if (!this.soundEnabled) {
+            return;
+        }
+
+        const steps =
+            Math.floor(
+                Math.random() * 3
+            ) + 3;
+
+        for (
+            let i = 0;
+            i < steps;
+            i++
+        ) {
             setTimeout(() => {
-                if (this.sounds.step) this.sounds.step();
+                if (
+                    this.sounds.step
+                ) {
+                    this.sounds.step();
+                }
             }, i * 250);
         }
     }
 
     setTrollState(state) {
-        const troll = document.getElementById('troll');
-        troll.classList.remove('troll-idle', 'troll-walking', 'troll-tapping', 'troll-talking', 'troll-jumping');
-        troll.classList.add(`troll-${state}`);
-        this.trollState = state;
-    }
+        const troll =
+            document.getElementById('troll');
 
-    checkNearbyObjects() {
-        // Проверяем, рядом ли тролль с ненайденными объектами
-        const threshold = 12; // % от экрана
-
-        this.objects.forEach(obj => {
-            if (this.objectsFound.has(obj.id)) return;
-
-            const dist = Math.sqrt((this.trollPos.x - obj.x) ** 2 + (this.trollPos.y - obj.y) ** 2);
-
-            if (dist < threshold) {
-                this.showSpeech(`Ты близко! ${obj.name} где-то рядом...`, 2500);
-                this.createHintRing(obj.x, obj.y);
-            }
-        });
-    }
-
-    findObject(objId) {
-        if (this.objectsFound.has(objId)) return;
-
-        const obj = this.objects.find(o => o.id === objId);
-        if (!obj) return;
-
-        // Проверяем расстояние
-        const dist = Math.sqrt((this.trollPos.x - obj.x) ** 2 + (this.trollPos.y - obj.y) ** 2);
-
-        if (dist > 15) {
-            // Слишком далеко - тролль идёт к объекту
-            this.moveTrollTo(obj.x, obj.y);
-            setTimeout(() => this.findObject(objId), 1000);
+        if (!troll) {
             return;
         }
 
-        // Нашли!
-        this.objectsFound.add(objId);
+        troll.classList.remove(
+            'troll-idle',
+            'troll-walking',
+            'troll-tapping',
+            'troll-talking',
+            'troll-jumping'
+        );
+
+        troll.classList.add(
+            `troll-${state}`
+        );
+
+        this.trollState = state;
+    }
+
+    // ============================================================
+    // OBJECT DETECTION
+    // ============================================================
+
+    checkNearbyObjects() {
+        const threshold = 12;
+
+        this.objects.forEach(
+            (obj) => {
+                if (
+                    this.objectsFound.has(
+                        obj.id
+                    )
+                ) {
+                    return;
+                }
+
+                const dx =
+                    this.trollPos.x -
+                    obj.x;
+
+                const dy =
+                    this.trollPos.y -
+                    obj.y;
+
+                const dist =
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    );
+
+                if (
+                    dist < threshold
+                ) {
+                    this.showSpeech(
+                        `Ты близко! ${obj.name} где-то рядом...`,
+                        2500
+                    );
+
+                    this.createHintRing(
+                        obj.x,
+                        obj.y
+                    );
+                }
+            }
+        );
+    }
+
+    findObject(objId) {
+        if (
+            this.objectsFound.has(
+                objId
+            )
+        ) {
+            return;
+        }
+
+        const obj =
+            this.objects.find(
+                (item) =>
+                    item.id === objId
+            );
+
+        if (!obj) {
+            return;
+        }
+
+        const dx =
+            this.trollPos.x -
+            obj.x;
+
+        const dy =
+            this.trollPos.y -
+            obj.y;
+
+        const dist =
+            Math.sqrt(
+                dx * dx +
+                dy * dy
+            );
+
+        if (dist > 15) {
+            this.moveTrollTo(
+                obj.x,
+                obj.y
+            );
+
+            setTimeout(() => {
+                this.findObject(
+                    objId
+                );
+            }, 1000);
+
+            return;
+        }
+
+        // --------------------------------------------------------
+        // OBJECT FOUND
+        // --------------------------------------------------------
+
+        this.objectsFound.add(
+            objId
+        );
+
         this.found++;
 
-        // Визуальные эффекты
-        const el = document.getElementById(objId);
-        el.classList.add('found');
-        this.createParticles(obj.x, obj.y);
+        const element =
+            document.getElementById(
+                objId
+            );
 
-        // Звук
-        if (this.sounds.found) this.sounds.found();
-        if (this.haptic) this.haptic.notificationOccurred('success');
+        if (element) {
+            element.classList.add(
+                'found'
+            );
+        }
 
-        // Обновление UI
+        this.createParticles(
+            obj.x,
+            obj.y
+        );
+
+        if (this.sounds.found) {
+            this.sounds.found();
+        }
+
+        if (
+            this.haptic &&
+            typeof this.haptic.notificationOccurred === 'function'
+        ) {
+            try {
+                this.haptic.notificationOccurred(
+                    'success'
+                );
+            } catch (error) {}
+        }
+
         this.updateCounter();
 
-        // Реплика тролля
         const messages = [
             `Нашёл ${obj.name}! ✨`,
             `Отлично! ${obj.name} обнаружен!`,
             `Ещё один артефакт!`,
             `Великолепно! ${obj.name}!`
         ];
-        this.showSpeech(messages[Math.floor(Math.random() * messages.length)], 2500);
 
-        // Проверка победы
-        if (this.found >= this.total) {
-            setTimeout(() => this.triggerVictory(), 1500);
+        const message =
+            messages[
+                Math.floor(
+                    Math.random() *
+                    messages.length
+                )
+            ];
+
+        this.showSpeech(
+            message,
+            2500
+        );
+
+        if (
+            this.found >=
+            this.total
+        ) {
+            setTimeout(
+                () => {
+                    this.triggerVictory();
+                },
+                1500
+            );
         }
     }
+
+    // ============================================================
+    // PARTICLES
+    // ============================================================
 
     createParticles(x, y) {
-        const container = document.getElementById('game-container');
+        const container =
+            document.getElementById(
+                'game-container'
+            );
 
-        for (let i = 0; i < 12; i++) {
-            const particle = document.createElement('div');
-            particle.className = 'particle';
-            particle.style.left = x + '%';
-            particle.style.top = y + '%';
-            particle.style.background = `hsl(${Math.random() * 60 + 40}, 100%, 70%)`;
+        if (!container) {
+            return;
+        }
 
-            const angle = (Math.PI * 2 * i) / 12;
-            const distance = 30 + Math.random() * 40;
-            const tx = Math.cos(angle) * distance;
-            const ty = Math.sin(angle) * distance - 50;
+        for (
+            let i = 0;
+            i < 12;
+            i++
+        ) {
+            const particle =
+                document.createElement(
+                    'div'
+                );
 
-            particle.style.setProperty('--tx', tx + 'px');
-            particle.style.setProperty('--ty', ty + 'px');
-            particle.style.animation = `particleFloat 1.5s ease-out forwards`;
+            particle.className =
+                'particle';
 
-            container.appendChild(particle);
-            setTimeout(() => particle.remove(), 1500);
+            particle.style.left =
+                x + '%';
+
+            particle.style.top =
+                y + '%';
+
+            particle.style.background =
+                `hsl(${Math.random() * 60 + 40}, 100%, 70%)`;
+
+            const angle =
+                (Math.PI * 2 * i) /
+                12;
+
+            const distance =
+                30 +
+                Math.random() * 40;
+
+            const tx =
+                Math.cos(angle) *
+                distance;
+
+            const ty =
+                Math.sin(angle) *
+                distance -
+                50;
+
+            particle.style.setProperty(
+                '--tx',
+                tx + 'px'
+            );
+
+            particle.style.setProperty(
+                '--ty',
+                ty + 'px'
+            );
+
+            particle.style.animation =
+                'particleFloat 1.5s ease-out forwards';
+
+            container.appendChild(
+                particle
+            );
+
+            setTimeout(() => {
+                particle.remove();
+            }, 1500);
         }
     }
 
-    createHintRing(x, y) {
-        const container = document.getElementById('game-container');
-        const ring = document.createElement('div');
-        ring.className = 'hint-ring';
-        ring.style.left = x + '%';
-        ring.style.top = y + '%';
-        ring.style.transform = 'translate(-50%, -50%)';
+    // ============================================================
+    // HINT RING
+    // ============================================================
 
-        container.appendChild(ring);
-        setTimeout(() => ring.remove(), 1500);
+    createHintRing(x, y) {
+        const container =
+            document.getElementById(
+                'game-container'
+            );
+
+        if (!container) {
+            return;
+        }
+
+        const ring =
+            document.createElement(
+                'div'
+            );
+
+        ring.className =
+            'hint-ring';
+
+        ring.style.left =
+            x + '%';
+
+        ring.style.top =
+            y + '%';
+
+        ring.style.transform =
+            'translate(-50%, -50%)';
+
+        container.appendChild(
+            ring
+        );
+
+        setTimeout(() => {
+            ring.remove();
+        }, 1500);
     }
+
+    // ============================================================
+    // COUNTER
+    // ============================================================
 
     updateCounter() {
-        document.getElementById('found-count').textContent = this.found;
+        const counter =
+            document.getElementById(
+                'found-count'
+            );
+
+        if (counter) {
+            counter.textContent =
+                this.found;
+        }
     }
 
-    // ===== TROLL BEHAVIOR =====
-    startTrollBehavior() {
-        // Подсказки каждые 10 секунд
-        this.hintTimer = setInterval(() => {
-            if (this.found >= this.total) return;
-            this.currentHint = (this.currentHint + 1) % this.hints.length;
-            this.showSpeech(this.hints[this.currentHint], 3000);
-        }, 10000);
+    // ============================================================
+    // TROLL AUTONOMOUS BEHAVIOR
+    // ============================================================
 
-        // Стук по экрану каждые 10 секунд
-        this.tapTimer = setInterval(() => {
-            if (this.isMoving || this.found >= this.total) return;
-            this.trollTapScreen();
-        }, 10000);
+    startTrollBehavior() {
+        if (this.hintTimer) {
+            clearInterval(
+                this.hintTimer
+            );
+        }
+
+        if (this.tapTimer) {
+            clearInterval(
+                this.tapTimer
+            );
+        }
+
+        // Подсказки каждые 10 секунд.
+        this.hintTimer =
+            setInterval(() => {
+                if (
+                    this.found >=
+                    this.total
+                ) {
+                    return;
+                }
+
+                this.currentHint =
+                    (
+                        this.currentHint +
+                        1
+                    ) %
+                    this.hints.length;
+
+                this.showSpeech(
+                    this.hints[
+                        this.currentHint
+                    ],
+                    3000
+                );
+            }, 10000);
+
+        // Стук каждые 10 секунд.
+        this.tapTimer =
+            setInterval(() => {
+                if (
+                    this.isMoving ||
+                    this.found >=
+                    this.total
+                ) {
+                    return;
+                }
+
+                this.trollTapScreen();
+            }, 10000);
     }
 
     trollTapScreen() {
-        if (this.trollState !== 'idle') return;
+        if (
+            this.trollState !==
+            'idle'
+        ) {
+            return;
+        }
 
-        this.setTrollState('tapping');
-        if (this.sounds.tap) this.sounds.tap();
+        this.setTrollState(
+            'tapping'
+        );
+
+        if (this.sounds.tap) {
+            this.sounds.tap();
+        }
 
         setTimeout(() => {
-            if (this.trollState === 'tapping') {
-                this.setTrollState('idle');
+            if (
+                this.trollState ===
+                'tapping'
+            ) {
+                this.setTrollState(
+                    'idle'
+                );
             }
         }, 2000);
     }
 
-    showSpeech(text, duration = 3000) {
-        const bubble = document.getElementById('speech-bubble');
-        const bubbleText = bubble.querySelector('.bubble-text');
+    // ============================================================
+    // SPEECH
+    // ============================================================
 
-        bubbleText.textContent = text;
-        bubble.classList.add('visible');
+    showSpeech(
+        text,
+        duration = 3000
+    ) {
+        const bubble =
+            document.getElementById(
+                'speech-bubble'
+            );
 
-        if (this.sounds.hint) this.sounds.hint();
+        if (!bubble) {
+            return;
+        }
+
+        const bubbleText =
+            bubble.querySelector(
+                '.bubble-text'
+            );
+
+        if (!bubbleText) {
+            return;
+        }
+
+        bubbleText.textContent =
+            text;
+
+        bubble.classList.add(
+            'visible'
+        );
+
+        if (this.sounds.hint) {
+            this.sounds.hint();
+        }
 
         setTimeout(() => {
-            bubble.classList.remove('visible');
+            bubble.classList.remove(
+                'visible'
+            );
         }, duration);
     }
 
-    showHint() {
-        if (this.found >= this.total) return;
+    // ============================================================
+    // HINT BUTTON
+    // ============================================================
 
-        // Находим ближайший ненайденный объект
+    showHint() {
+        if (
+            this.found >=
+            this.total
+        ) {
+            return;
+        }
+
         let nearest = null;
         let minDist = Infinity;
 
-        this.objects.forEach(obj => {
-            if (this.objectsFound.has(obj.id)) return;
-            const dist = Math.sqrt((this.trollPos.x - obj.x) ** 2 + (this.trollPos.y - obj.y) ** 2);
-            if (dist < minDist) {
-                minDist = dist;
-                nearest = obj;
-            }
-        });
+        this.objects.forEach(
+            (obj) => {
+                if (
+                    this.objectsFound.has(
+                        obj.id
+                    )
+                ) {
+                    return;
+                }
 
-        if (nearest) {
-            this.createHintRing(nearest.x, nearest.y);
-            this.showSpeech(`Ищи ${nearest.name}!`, 2000);
-            this.moveTrollTo(nearest.x, nearest.y);
+                const dx =
+                    this.trollPos.x -
+                    obj.x;
+
+                const dy =
+                    this.trollPos.y -
+                    obj.y;
+
+                const dist =
+                    Math.sqrt(
+                        dx * dx +
+                        dy * dy
+                    );
+
+                if (
+                    dist < minDist
+                ) {
+                    minDist = dist;
+                    nearest = obj;
+                }
+            }
+        );
+
+        if (!nearest) {
+            return;
+        }
+
+        this.createHintRing(
+            nearest.x,
+            nearest.y
+        );
+
+        this.showSpeech(
+            `Ищи ${nearest.name}!`,
+            2000
+        );
+
+        this.moveTrollTo(
+            nearest.x,
+            nearest.y
+        );
+    }
+
+    // ============================================================
+    // SOUND TOGGLE
+    // ============================================================
+
+    toggleSound() {
+        this.soundEnabled =
+            !this.soundEnabled;
+
+        const button =
+            document.getElementById(
+                'sound-toggle'
+            );
+
+        if (button) {
+            button.textContent =
+                this.soundEnabled
+                    ? '🔊'
+                    : '🔇';
+        }
+
+        if (
+            this.soundEnabled &&
+            !this.audioCtx
+        ) {
+            this.initAudio();
         }
     }
 
-    toggleSound() {
-        this.soundEnabled = !this.soundEnabled;
-        const btn = document.getElementById('sound-toggle');
-        btn.textContent = this.soundEnabled ? '🔊' : '🔇';
-    }
+    // ============================================================
+    // VICTORY
+    // ============================================================
 
-    // ===== VICTORY =====
     triggerVictory() {
-        // Открываем портал
-        const portal = document.getElementById('portal');
-        portal.classList.add('visible');
-        if (this.sounds.portal) this.sounds.portal();
+        const portal =
+            document.getElementById(
+                'portal'
+            );
 
-        // Тролль идёт к порталу
-        this.moveTrollTo(50, 15);
+        if (portal) {
+            portal.classList.add(
+                'visible'
+            );
+        }
+
+        if (this.sounds.portal) {
+            this.sounds.portal();
+        }
+
+        this.moveTrollTo(
+            50,
+            15
+        );
 
         setTimeout(() => {
-            // Финальная анимация - прыжок
-            this.setTrollState('jumping');
-            if (this.sounds.win) this.sounds.win();
-            if (this.haptic) this.haptic.notificationOccurred('success');
+            this.setTrollState(
+                'jumping'
+            );
+
+            if (this.sounds.win) {
+                this.sounds.win();
+            }
+
+            if (
+                this.haptic &&
+                typeof this.haptic.notificationOccurred === 'function'
+            ) {
+                try {
+                    this.haptic.notificationOccurred(
+                        'success'
+                    );
+                } catch (error) {}
+            }
 
             setTimeout(() => {
-                document.getElementById('victory-screen').classList.remove('hidden');
+                const victoryScreen =
+                    document.getElementById(
+                        'victory-screen'
+                    );
+
+                if (victoryScreen) {
+                    victoryScreen.classList.remove(
+                        'hidden'
+                    );
+                }
             }, 2000);
         }, 2000);
     }
 
-    // ===== BACKGROUND MUSIC =====
-    startBackgroundMusic() {
-        if (!this.audioCtx || !this.soundEnabled) return;
+    // ============================================================
+    // BACKGROUND MUSIC
+    // ============================================================
 
-        // Простая фоновая мелодия
-        const notes = [262, 330, 392, 330, 262, 294, 349, 294]; // C E G E C D F D
+    startBackgroundMusic() {
+        if (
+            !this.audioCtx ||
+            !this.soundEnabled
+        ) {
+            return;
+        }
+
+        // Не создаём несколько музыкальных таймеров.
+        if (this.bgMusicInterval) {
+            return;
+        }
+
+        const notes = [
+            262,
+            330,
+            392,
+            330,
+            262,
+            294,
+            349,
+            294
+        ];
+
         let noteIndex = 0;
 
-        this.bgMusicInterval = setInterval(() => {
-            if (!this.soundEnabled) return;
-            this.playTone(notes[noteIndex], 0.8, 'sine', 0.08);
-            noteIndex = (noteIndex + 1) % notes.length;
-        }, 1200);
+        this.bgMusicInterval =
+            setInterval(() => {
+                if (
+                    !this.soundEnabled
+                ) {
+                    return;
+                }
+
+                this.playTone(
+                    notes[noteIndex],
+                    0.8,
+                    'sine',
+                    0.08
+                );
+
+                noteIndex =
+                    (
+                        noteIndex + 1
+                    ) %
+                    notes.length;
+            }, 900);
     }
 
-    // ===== RESTART =====
+    // ============================================================
+    // RESTART
+    // ============================================================
+
     restart() {
+        // Останавливаем старую музыку.
+        if (this.bgMusicInterval) {
+            clearInterval(
+                this.bgMusicInterval
+            );
+
+            this.bgMusicInterval =
+                null;
+        }
+
+        // Сбрасываем состояние.
         this.found = 0;
         this.objectsFound.clear();
-        this.objects.forEach(obj => {
-            const el = document.getElementById(obj.id);
-            if (el) el.classList.remove('found');
-        });
 
-        document.getElementById('victory-screen').classList.add('hidden');
-        document.getElementById('portal').classList.remove('visible');
+        this.currentHint = 0;
 
-        this.trollPos = { x: 50, y: 85 };
-        const troll = document.getElementById('troll');
-        troll.style.left = '50%';
-        troll.style.top = '85%';
-        troll.style.transform = 'translate(-50%, -100%)';
-        this.setTrollState('idle');
+        this.isMoving = false;
+
+        this.trollPos = {
+            x: 50,
+            y: 85
+        };
+
+        this.trollState =
+            'idle';
+
+        // Сбрасываем объекты.
+        this.objects.forEach(
+            (obj) => {
+                const element =
+                    document.getElementById(
+                        obj.id
+                    );
+
+                if (element) {
+                    element.classList.remove(
+                        'found'
+                    );
+                }
+            }
+        );
+
+        // Скрываем портал.
+        const portal =
+            document.getElementById(
+                'portal'
+            );
+
+        if (portal) {
+            portal.classList.remove(
+                'visible'
+            );
+        }
+
+        // Скрываем экран победы.
+        const victoryScreen =
+            document.getElementById(
+                'victory-screen'
+            );
+
+        if (victoryScreen) {
+            victoryScreen.classList.add(
+                'hidden'
+            );
+        }
+
+        // Возвращаем стартовую позицию.
+        const troll =
+            document.getElementById(
+                'troll'
+            );
+
+        if (troll) {
+            troll.style.transition =
+                'none';
+
+            troll.style.left =
+                '50%';
+
+            troll.style.top =
+                '85%';
+
+            troll.style.transform =
+                'translate(-50%, -100%) scaleX(1)';
+        }
+
+        this.setTrollState(
+            'idle'
+        );
 
         this.updateCounter();
-        this.showSpeech(this.hints[0], 3000);
+
+        // Возвращаем стартовый экран.
+        const startScreen =
+            document.getElementById(
+                'start-screen'
+            );
+
+        if (startScreen) {
+            startScreen.classList.remove(
+                'hidden'
+            );
+        }
+
+        // Новая игровая сессия.
+        this.showSpeech(
+            'Начнём сначала! 🌳',
+            2500
+        );
     }
 }
 
-// ===== INIT =====
-document.addEventListener('DOMContentLoaded', () => {
-    window.game = new AstraGame();
-});
+// ============================================================
+// BOOT
+// ============================================================
+
+document.addEventListener(
+    'DOMContentLoaded',
+    () => {
+        window.game =
+            new AstraGame();
+    }
+);
