@@ -1,7 +1,12 @@
 // ASTRAWAY 2.0
 // Distance-driven procedural gait.
 //
-// The gait system does not depend on frame rate.
+// Foot targets are generated from the character's
+// anatomical rest pose instead of being placed near
+// the pelvis.
+//
+// The gait system does not depend on frame rate
+// for step timing decisions.
 // Phase advances from actual travelled distance.
 //
 // Each leg has:
@@ -11,11 +16,11 @@
 //   - step target
 //   - swing progress
 //
-// Surface normal controls foot lift, so the character can
-// walk on curved / tilted branches.
+// Surface normal controls the vertical anatomical
+// offset and foot lift, so the character follows
+// curved / tilted branches naturally.
 
 import {
-    clamp,
     clamp01,
     damp,
     distance,
@@ -40,7 +45,7 @@ export class Gait {
         this.stepWidth =
             Math.max(
                 0,
-                finite(options.stepWidth, 16)
+                finite(options.stepWidth, 20)
             );
 
         this.stepHeight =
@@ -67,6 +72,45 @@ export class Gait {
             );
 
 
+        // -------------------------------------------------
+        // ANATOMICAL REST POSE
+        // -------------------------------------------------
+        //
+        // Current Skeleton geometry:
+        //
+        // pelvis
+        //   -> hip:   x = +/-10, y = 4
+        //   -> knee:  y = 27
+        //   -> ankle: y = 27
+        //
+        // Therefore:
+        //
+        // ankle from pelvis:
+        //   left  = (-10, 58)
+        //   right = ( 10, 58)
+        //
+        // In the character frame:
+        //   X = movement tangent
+        //   Y = surface normal
+        //
+        // This is the important correction that prevents
+        // the IK solver from folding the legs underneath
+        // the pelvis.
+        //
+
+        this.legRestLength =
+            Math.max(
+                1,
+                finite(options.legRestLength, 58)
+            );
+
+        this.hipOffset =
+            Math.max(
+                0,
+                finite(options.hipOffset, 10)
+            );
+
+
         this.phase = 0;
 
         this.distanceAccumulator = 0;
@@ -76,9 +120,11 @@ export class Gait {
 
         this.legs = {
 
-            left: this.createLeg(-1),
+            left:
+                this.createLeg(-1),
 
-            right: this.createLeg(1)
+            right:
+                this.createLeg(1)
         };
     }
 
@@ -138,64 +184,76 @@ export class Gait {
 
 
         const base =
-            this.getFootBase(
+            this.getRestFootPositions(
                 characterPosition,
                 frame.tangent,
                 frame.normal
             );
 
 
-        this.legs.left.position =
-            {
-                x: base.left.x,
-                y: base.left.y
-            };
+        this.setLegPosition(
+            this.legs.left,
+            base.left
+        );
 
-        this.legs.left.plantedPosition =
-            {
-                x: base.left.x,
-                y: base.left.y
-            };
-
-
-        this.legs.right.position =
-            {
-                x: base.right.x,
-                y: base.right.y
-            };
-
-        this.legs.right.plantedPosition =
-            {
-                x: base.right.x,
-                y: base.right.y
-            };
-
-
-        this.legs.left.targetPosition =
-            {
-                x: base.left.x,
-                y: base.left.y
-            };
-
-        this.legs.right.targetPosition =
-            {
-                x: base.right.x,
-                y: base.right.y
-            };
+        this.setLegPosition(
+            this.legs.right,
+            base.right
+        );
 
 
         this.legs.left.lastSurfaceT =
-            surfaceT;
+            finite(
+                surfaceT,
+                0
+            );
 
         this.legs.right.lastSurfaceT =
-            surfaceT;
+            finite(
+                surfaceT,
+                0
+            );
 
 
         this.initialized = true;
     }
 
 
-    getFrame(tangent, normal) {
+    setLegPosition(
+        leg,
+        position
+    ) {
+
+        leg.position = {
+            x: position.x,
+            y: position.y
+        };
+
+        leg.plantedPosition = {
+            x: position.x,
+            y: position.y
+        };
+
+        leg.startPosition = {
+            x: position.x,
+            y: position.y
+        };
+
+        leg.targetPosition = {
+            x: position.x,
+            y: position.y
+        };
+
+        leg.progress = 0;
+        leg.stepping = false;
+        leg.planted = true;
+    }
+
+
+    getFrame(
+        tangent,
+        normal
+    ) {
 
         const t =
             normalize(
@@ -214,7 +272,7 @@ export class Gait {
             );
 
 
-        // Ensure the frame remains perpendicular.
+        // Ensure perpendicular frame.
 
         const dot =
             t.x * n.x +
@@ -223,9 +281,13 @@ export class Gait {
 
         n = {
 
-            x: n.x - t.x * dot,
+            x:
+                n.x -
+                t.x * dot,
 
-            y: n.y - t.y * dot
+            y:
+                n.y -
+                t.y * dot
         };
 
 
@@ -239,35 +301,81 @@ export class Gait {
 
 
         return {
+
             tangent: t,
+
             normal: n
         };
     }
 
 
-    getFootBase(
+    // -----------------------------------------------------
+    // ANATOMICAL FOOT POSITIONS
+    // -----------------------------------------------------
+    //
+    // These positions mirror the actual Skeleton rest
+    // pose.
+    //
+    // Horizontal branch example:
+    //
+    //              character
+    //                  O
+    //                  |
+    //                  |
+    //              L     R
+    //              |     |
+    //
+    // Feet are approximately 58 px below the pelvis,
+    // not immediately beside it.
+    //
+
+    getRestFootPositions(
         characterPosition,
         tangent,
         normal
     ) {
 
-        const halfWidth =
-            this.stepWidth * 0.5;
+        const leftBase =
+            addScaled(
+                characterPosition,
+                normal,
+                this.legRestLength
+            );
+
+        const rightBase =
+            addScaled(
+                characterPosition,
+                normal,
+                this.legRestLength
+            );
+
+
+        // Match Skeleton hip offsets.
+        //
+        // Left ankle:
+        //   -hipOffset along tangent
+        //
+        // Right ankle:
+        //   +hipOffset along tangent
+        //
+        const left =
+            addScaled(
+                leftBase,
+                tangent,
+                -this.hipOffset
+            );
+
+        const right =
+            addScaled(
+                rightBase,
+                tangent,
+                this.hipOffset
+            );
 
 
         return {
-
-            left: addScaled(
-                characterPosition,
-                normal,
-                halfWidth
-            ),
-
-            right: addScaled(
-                characterPosition,
-                normal,
-                -halfWidth
-            )
+            left,
+            right
         };
     }
 
@@ -316,11 +424,13 @@ export class Gait {
         // DISTANCE-BASED PHASE
         // -------------------------------------------------
 
-        if (moving && safeDistance > 0) {
+        if (
+            moving &&
+            safeDistance > 0
+        ) {
 
             this.distanceAccumulator +=
                 safeDistance;
-
 
             this.phase =
                 (
@@ -334,7 +444,7 @@ export class Gait {
 
 
         // -------------------------------------------------
-        // Determine whether a new step is required.
+        // START STEPS
         // -------------------------------------------------
 
         if (moving) {
@@ -358,27 +468,24 @@ export class Gait {
 
 
         // -------------------------------------------------
-        // Update both feet.
+        // UPDATE FEET
         // -------------------------------------------------
 
         this.updateLeg(
             this.legs.left,
             dt,
-            frame.normal,
-            moving
+            frame.normal
         );
 
         this.updateLeg(
             this.legs.right,
             dt,
-            frame.normal,
-            moving
+            frame.normal
         );
 
 
         // -------------------------------------------------
-        // Idle = gradually return feet to stable planted
-        // positions without snapping.
+        // IDLE
         // -------------------------------------------------
 
         if (!moving) {
@@ -397,19 +504,26 @@ export class Gait {
 
         return {
 
-            left:
-                {
-                    x: this.legs.left.position.x,
-                    y: this.legs.left.position.y
-                },
+            left: {
 
-            right:
-                {
-                    x: this.legs.right.position.x,
-                    y: this.legs.right.position.y
-                },
+                x:
+                    this.legs.left.position.x,
 
-            phase: this.phase,
+                y:
+                    this.legs.left.position.y
+            },
+
+            right: {
+
+                x:
+                    this.legs.right.position.x,
+
+                y:
+                    this.legs.right.position.y
+            },
+
+            phase:
+                this.phase,
 
             leftStepping:
                 this.legs.left.stepping,
@@ -433,34 +547,61 @@ export class Gait {
         }
 
 
-        const base =
+        // -------------------------------------------------
+        // REST POSITION
+        // -------------------------------------------------
+
+        const restBase =
             addScaled(
                 characterPosition,
                 frame.normal,
-                -leg.side *
-                this.stepWidth *
-                0.5
+                this.legRestLength
             );
 
 
-        const forward =
+        const restPosition =
             addScaled(
-                base,
+                restBase,
                 frame.tangent,
                 leg.side *
-                this.stepLength *
-                0.55
+                this.hipOffset
             );
 
+
+        // -------------------------------------------------
+        // STEP TARGET
+        // -------------------------------------------------
+        //
+        // Both feet move FORWARD relative to the
+        // character.
+        //
+        // side is used only for the lateral/anatomical
+        // offset.
+        //
+
+        const forwardDistance =
+            this.stepLength * 0.55;
+
+
+        const target =
+            addScaled(
+                restPosition,
+                frame.tangent,
+                forwardDistance
+            );
+
+
+        // -------------------------------------------------
+        // HOW FAR IS THE CURRENT FOOT FROM ITS DESIRED
+        // POSITION?
+        // -------------------------------------------------
 
         const desiredDistance =
             distance(
                 leg.position,
-                forward
+                target
             );
 
-
-        // Foot is already close enough.
 
         if (
             desiredDistance <
@@ -470,13 +611,16 @@ export class Gait {
         }
 
 
-        // Alternating rhythm.
-        //
-        // Left and right are offset by half a cycle.
+        // -------------------------------------------------
+        // ALTERNATING RHYTHM
+        // -------------------------------------------------
+
         const expectedPhase =
             leg.side < 0
                 ? this.phase
-                : (this.phase + 0.5) % 1;
+                : (
+                    this.phase + 0.5
+                ) % 1;
 
 
         const rhythmReady =
@@ -493,7 +637,7 @@ export class Gait {
 
         this.startStep(
             leg,
-            forward,
+            target,
             surface,
             surfaceT
         );
@@ -509,19 +653,27 @@ export class Gait {
 
         leg.stepping = true;
 
+        leg.planted = false;
+
         leg.progress = 0;
 
-        leg.startPosition =
-            {
-                x: leg.position.x,
-                y: leg.position.y
-            };
+        leg.startPosition = {
 
-        leg.targetPosition =
-            {
-                x: target.x,
-                y: target.y
-            };
+            x:
+                leg.position.x,
+
+            y:
+                leg.position.y
+        };
+
+        leg.targetPosition = {
+
+            x:
+                target.x,
+
+            y:
+                target.y
+        };
 
         leg.lastSurfaceT =
             finite(
@@ -540,25 +692,23 @@ export class Gait {
     updateLeg(
         leg,
         dt,
-        normal,
-        moving
+        normal
     ) {
 
         if (!leg.stepping) {
 
-            leg.position =
-                {
-                    x: leg.plantedPosition.x,
-                    y: leg.plantedPosition.y
-                };
+            leg.position = {
+
+                x:
+                    leg.plantedPosition.x,
+
+                y:
+                    leg.plantedPosition.y
+            };
 
             return;
         }
 
-
-        // Progress is based on actual elapsed time only
-        // for the internal swing animation. The decision
-        // to take a step is distance-driven.
 
         const safeDt =
             Math.max(
@@ -579,7 +729,7 @@ export class Gait {
             leg.progress;
 
 
-        // Smooth swing curve.
+        // Smoothstep.
 
         const eased =
             p * p *
@@ -595,14 +745,7 @@ export class Gait {
 
 
         // -------------------------------------------------
-        // Foot lift
-        //
-        // sin² gives:
-        //   0 at takeoff
-        //   maximum at middle
-        //   0 at landing
-        //
-        // Lift follows SURFACE NORMAL, not global Y.
+        // FOOT LIFT
         // -------------------------------------------------
 
         const lift =
@@ -627,21 +770,33 @@ export class Gait {
             position;
 
 
+        // -------------------------------------------------
+        // LAND
+        // -------------------------------------------------
+
         if (p >= 1) {
 
-            leg.position =
-                {
-                    x: leg.targetPosition.x,
-                    y: leg.targetPosition.y
-                };
+            leg.position = {
 
-            leg.plantedPosition =
-                {
-                    x: leg.targetPosition.x,
-                    y: leg.targetPosition.y
-                };
+                x:
+                    leg.targetPosition.x,
+
+                y:
+                    leg.targetPosition.y
+            };
+
+            leg.plantedPosition = {
+
+                x:
+                    leg.targetPosition.x,
+
+                y:
+                    leg.targetPosition.y
+            };
 
             leg.stepping = false;
+
+            leg.planted = true;
 
             leg.progress = 0;
         }
@@ -694,9 +849,11 @@ export class Gait {
 
         return {
 
-            x: leg.position.x,
+            x:
+                leg.position.x,
 
-            y: leg.position.y
+            y:
+                leg.position.y
         };
     }
 
@@ -719,6 +876,8 @@ export class Gait {
 
             leg.stepping = false;
 
+            leg.planted = false;
+
             leg.progress = 0;
 
             leg.position.x = 0;
@@ -726,6 +885,12 @@ export class Gait {
 
             leg.plantedPosition.x = 0;
             leg.plantedPosition.y = 0;
+
+            leg.startPosition.x = 0;
+            leg.startPosition.y = 0;
+
+            leg.targetPosition.x = 0;
+            leg.targetPosition.y = 0;
         }
     }
 }
