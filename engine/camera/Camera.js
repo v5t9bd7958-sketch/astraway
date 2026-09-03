@@ -1,49 +1,40 @@
 /**
  * Camera.js
+ * Canvas 2D camera for ASTRAWAY.
  *
- * Canvas 2D камера для ASTRAWAY.
- *
- * Координатная система:
- *   worldX → screenX
- *   worldY → screenY
- *
- * Никаких перестановок X/Y и поворотов мира.
- *
- * Совместима с Game.js:
- *   new Camera({ followSpeed, zoom })
- *   camera.setWorldBounds(...)
- *   camera.setViewport(...)
- *   camera.follow(...)
- *   camera.update(...)
- *   camera.worldToScreen(...)
- *   camera.screenToWorld(...)
+ * X остаётся X.
+ * Y остаётся Y.
+ * Никаких перестановок осей и поворотов мира.
  */
 
 export class Camera {
 
     constructor(options = {}) {
 
-        this.worldWidth = 1600;
-        this.worldHeight = 5190;
+        this.worldWidth =
+            Number.isFinite(options.worldWidth)
+                ? options.worldWidth
+                : 1600;
 
-        this.x = this.worldWidth / 2;
-        this.y = this.worldHeight / 2;
+        this.worldHeight =
+            Number.isFinite(options.worldHeight)
+                ? options.worldHeight
+                : 1000;
 
-        this.targetX = this.x;
-        this.targetY = this.y;
+        this.zoom =
+            Number.isFinite(options.zoom) && options.zoom > 0
+                ? options.zoom
+                : 1;
 
-        this.zoom = Number.isFinite(options.zoom)
-            ? options.zoom
-            : 1;
+        this.followSpeed =
+            Number.isFinite(options.followSpeed)
+                ? Math.max(0.01, options.followSpeed)
+                : 7;
 
-        this.followSpeed = Number.isFinite(options.followSpeed)
-            ? Math.max(0.01, options.followSpeed)
-            : 7;
-
-        // Совместимость со старым API.
-        this.smoothing = Number.isFinite(options.smoothing)
-            ? Math.max(0.01, options.smoothing)
-            : this.followSpeed;
+        this.smoothing =
+            Number.isFinite(options.smoothing)
+                ? Math.max(0.01, options.smoothing)
+                : this.followSpeed;
 
         this.viewportW = 0;
         this.viewportH = 0;
@@ -53,37 +44,90 @@ export class Camera {
 
         this.minY = 0;
         this.maxY = this.worldHeight;
+
+        this.x = this.worldWidth / 2;
+        this.y = this.worldHeight / 2;
+
+        this.targetX = this.x;
+        this.targetY = this.y;
     }
 
 
-    // --------------------------------------------------
-    // WORLD BOUNDS
-    // --------------------------------------------------
-
-    setWorldBounds(
-        width,
-        height
-    ) {
+    setWorldBounds(widthOrBounds, height) {
 
         if (
-            Number.isFinite(width) &&
-            width > 0
+            widthOrBounds &&
+            typeof widthOrBounds === 'object'
         ) {
-            this.worldWidth = width;
+
+            const bounds = widthOrBounds;
+
+            if (
+                Number.isFinite(bounds.minX) &&
+                Number.isFinite(bounds.maxX)
+            ) {
+
+                this.minX = bounds.minX;
+                this.maxX = bounds.maxX;
+                this.worldWidth =
+                    bounds.maxX - bounds.minX;
+
+            } else if (
+                Number.isFinite(bounds.width)
+            ) {
+
+                this.minX = 0;
+                this.maxX = bounds.width;
+                this.worldWidth = bounds.width;
+            }
+
+
+            if (
+                Number.isFinite(bounds.minY) &&
+                Number.isFinite(bounds.maxY)
+            ) {
+
+                this.minY = bounds.minY;
+                this.maxY = bounds.maxY;
+                this.worldHeight =
+                    bounds.maxY - bounds.minY;
+
+            } else if (
+                Number.isFinite(bounds.height)
+            ) {
+
+                this.minY = 0;
+                this.maxY = bounds.height;
+                this.worldHeight = bounds.height;
+            }
+
+        } else {
+
+            if (
+                Number.isFinite(widthOrBounds) &&
+                widthOrBounds > 0
+            ) {
+
+                this.worldWidth =
+                    widthOrBounds;
+            }
+
+            if (
+                Number.isFinite(height) &&
+                height > 0
+            ) {
+
+                this.worldHeight =
+                    height;
+            }
+
+            this.minX = 0;
+            this.maxX = this.worldWidth;
+
+            this.minY = 0;
+            this.maxY = this.worldHeight;
         }
 
-        if (
-            Number.isFinite(height) &&
-            height > 0
-        ) {
-            this.worldHeight = height;
-        }
-
-        this.minX = 0;
-        this.maxX = this.worldWidth;
-
-        this.minY = 0;
-        this.maxY = this.worldHeight;
 
         this.x = this.clampX(this.x);
         this.y = this.clampY(this.y);
@@ -93,19 +137,13 @@ export class Camera {
     }
 
 
-    // --------------------------------------------------
-    // VIEWPORT
-    // --------------------------------------------------
-
-    setViewport(
-        width,
-        height
-    ) {
+    setViewport(width, height) {
 
         if (
             Number.isFinite(width) &&
             width >= 0
         ) {
+
             this.viewportW = width;
         }
 
@@ -113,6 +151,7 @@ export class Camera {
             Number.isFinite(height) &&
             height >= 0
         ) {
+
             this.viewportH = height;
         }
 
@@ -121,9 +160,58 @@ export class Camera {
     }
 
 
-    // --------------------------------------------------
-    // FOLLOW
-    // --------------------------------------------------
+    setPosition(x, y) {
+
+        if (
+            !Number.isFinite(x) ||
+            !Number.isFinite(y)
+        ) {
+
+            return;
+        }
+
+        this.x = this.clampX(x);
+        this.y = this.clampY(y);
+
+        this.targetX = this.x;
+        this.targetY = this.y;
+    }
+
+
+    reset() {
+
+        this.x =
+            this.clampX(
+                this.worldWidth / 2
+            );
+
+        this.y =
+            this.clampY(
+                this.worldHeight / 2
+            );
+
+        this.targetX = this.x;
+        this.targetY = this.y;
+    }
+
+
+    snapTo(worldPos) {
+
+        if (
+            !worldPos ||
+            !Number.isFinite(worldPos.x) ||
+            !Number.isFinite(worldPos.y)
+        ) {
+
+            return;
+        }
+
+        this.setPosition(
+            worldPos.x,
+            worldPos.y
+        );
+    }
+
 
     follow(worldPos) {
 
@@ -132,17 +220,17 @@ export class Camera {
             !Number.isFinite(worldPos.x) ||
             !Number.isFinite(worldPos.y)
         ) {
+
             return;
         }
 
-        this.targetX = worldPos.x;
-        this.targetY = worldPos.y;
+        this.targetX =
+            this.clampX(worldPos.x);
+
+        this.targetY =
+            this.clampY(worldPos.y);
     }
 
-
-    // --------------------------------------------------
-    // UPDATE
-    // --------------------------------------------------
 
     update(dt) {
 
@@ -150,16 +238,15 @@ export class Camera {
             !Number.isFinite(dt) ||
             dt <= 0
         ) {
+
             return;
         }
 
-        const speed = Math.max(
-            0.01,
-            this.followSpeed
-        );
-
         const factor =
-            1 - Math.exp(-speed * dt);
+            1 -
+            Math.exp(
+                -this.followSpeed * dt
+            );
 
         this.x +=
             (this.targetX - this.x) *
@@ -174,70 +261,50 @@ export class Camera {
     }
 
 
-    // --------------------------------------------------
-    // WORLD → SCREEN
-    // --------------------------------------------------
+    worldToScreen(wx, wy) {
 
-    worldToScreen(
-        wx,
-        wy
-    ) {
+        const x =
+            Number.isFinite(wx)
+                ? wx
+                : 0;
 
-        const safeX = Number.isFinite(wx)
-            ? wx
-            : 0;
-
-        const safeY = Number.isFinite(wy)
-            ? wy
-            : 0;
+        const y =
+            Number.isFinite(wy)
+                ? wy
+                : 0;
 
         return {
 
             x:
-                (safeX - this.x) *
+                (x - this.x) *
                 this.zoom +
                 this.viewportW / 2,
 
             y:
-                (safeY - this.y) *
+                (y - this.y) *
                 this.zoom +
                 this.viewportH / 2
         };
     }
 
 
-    // --------------------------------------------------
-    // SCREEN → WORLD
-    //
-    // Принимает:
-    //   screenToWorld(x, y)
-    //
-    // И одновременно:
-    //   screenToWorld({ x, y })
-    //
-    // Это важно для текущего InputController.
-    // --------------------------------------------------
+    screenToWorld(sx, sy) {
 
-    screenToWorld(
-        sx,
-        sy
-    ) {
-
-        let screenX = sx;
-        let screenY = sy;
+        let x = sx;
+        let y = sy;
 
         if (
             sx &&
             typeof sx === 'object'
         ) {
 
-            screenX = sx.x;
-            screenY = sx.y;
+            x = sx.x;
+            y = sx.y;
         }
 
         if (
-            !Number.isFinite(screenX) ||
-            !Number.isFinite(screenY)
+            !Number.isFinite(x) ||
+            !Number.isFinite(y)
         ) {
 
             return {
@@ -249,43 +316,17 @@ export class Camera {
         return {
 
             x:
-                (screenX - this.viewportW / 2) /
+                (x - this.viewportW / 2) /
                 this.zoom +
                 this.x,
 
             y:
-                (screenY - this.viewportH / 2) /
+                (y - this.viewportH / 2) /
                 this.zoom +
                 this.y
         };
     }
 
-
-    // --------------------------------------------------
-    // SNAP
-    // --------------------------------------------------
-
-    snapTo(worldPos) {
-
-        if (
-            !worldPos ||
-            !Number.isFinite(worldPos.x) ||
-            !Number.isFinite(worldPos.y)
-        ) {
-            return;
-        }
-
-        this.x = this.clampX(worldPos.x);
-        this.y = this.clampY(worldPos.y);
-
-        this.targetX = this.x;
-        this.targetY = this.y;
-    }
-
-
-    // --------------------------------------------------
-    // ZOOM
-    // --------------------------------------------------
 
     setZoom(zoom) {
 
@@ -293,6 +334,7 @@ export class Camera {
             !Number.isFinite(zoom) ||
             zoom <= 0
         ) {
+
             return;
         }
 
@@ -303,70 +345,85 @@ export class Camera {
     }
 
 
-    // --------------------------------------------------
-    // INTERNAL CLAMP
-    // --------------------------------------------------
-
     clampX(value) {
 
-        const halfWorldViewport =
+        const halfViewport =
             this.viewportW > 0
-                ? this.viewportW / (2 * this.zoom)
+                ? this.viewportW /
+                  (2 * this.zoom)
                 : 0;
 
-        const min =
-            this.minX +
+        const span =
             Math.min(
-                halfWorldViewport,
+                halfViewport,
                 this.worldWidth / 2
             );
+
+        const min =
+            this.minX + span;
 
         const max =
-            this.maxX -
-            Math.min(
-                halfWorldViewport,
-                this.worldWidth / 2
-            );
+            this.maxX - span;
 
         if (min > max) {
-            return this.worldWidth / 2;
+
+            return (
+                this.minX +
+                this.maxX
+            ) / 2;
         }
 
         return Math.max(
             min,
-            Math.min(max, value)
+            Math.min(
+                max,
+                Number.isFinite(value)
+                    ? value
+                    : min
+            )
         );
     }
 
 
     clampY(value) {
 
-        const halfWorldViewport =
+        const halfViewport =
             this.viewportH > 0
-                ? this.viewportH / (2 * this.zoom)
+                ? this.viewportH /
+                  (2 * this.zoom)
                 : 0;
 
-        const min =
-            this.minY +
+        const span =
             Math.min(
-                halfWorldViewport,
+                halfViewport,
                 this.worldHeight / 2
             );
+
+        const min =
+            this.minY + span;
 
         const max =
-            this.maxY -
-            Math.min(
-                halfWorldViewport,
-                this.worldHeight / 2
-            );
+            this.maxY - span;
 
         if (min > max) {
-            return this.worldHeight / 2;
+
+            return (
+                this.minY +
+                this.maxY
+            ) / 2;
         }
 
         return Math.max(
             min,
-            Math.min(max, value)
+            Math.min(
+                max,
+                Number.isFinite(value)
+                    ? value
+                    : min
+            )
         );
     }
 }
+
+
+export default Camera;
