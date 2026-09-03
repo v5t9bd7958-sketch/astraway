@@ -1,110 +1,372 @@
 /**
  * Camera.js
  *
- * 2D камера для портретного мира.
- * Не переставляет оси. Использует worldX → screenX, worldY → screenY.
- * Поддерживает плавное слежение (smoothing), зум (zoom), и корректный screen→world.
+ * Canvas 2D камера для ASTRAWAY.
  *
- * Важно: viewport — это размеры SVG-контейнера (или Canvas) в пикселях.
- * Мировые координаты: 0..WORLD_WIDTH, 0..WORLD_HEIGHT.
+ * Координатная система:
+ *   worldX → screenX
+ *   worldY → screenY
+ *
+ * Никаких перестановок X/Y и поворотов мира.
+ *
+ * Совместима с Game.js:
+ *   new Camera({ followSpeed, zoom })
+ *   camera.setWorldBounds(...)
+ *   camera.setViewport(...)
+ *   camera.follow(...)
+ *   camera.update(...)
+ *   camera.worldToScreen(...)
+ *   camera.screenToWorld(...)
  */
 
 export class Camera {
-  /**
-   * @param {number} worldWidth   — ширина мира (например, 2400)
-   * @param {number} worldHeight  — высота мира (например, 5190)
-   * @param {object} options
-   * @param {number} [options.smoothing=5]   — скорость слежения (чем больше, тем быстрее)
-   * @param {number} [options.zoom=1]        — начальный зум
-   */
-  constructor(worldWidth, worldHeight, { smoothing = 5, zoom = 1 } = {}) {
-    this.worldWidth = worldWidth;
-    this.worldHeight = worldHeight;
 
-    // Позиция камеры в мировых координатах (центр viewport)
-    this.x = worldWidth / 2;
-    this.y = worldHeight / 2;
+    constructor(options = {}) {
 
-    // Целевая позиция (для плавного слежения)
-    this.targetX = this.x;
-    this.targetY = this.y;
+        this.worldWidth = 1600;
+        this.worldHeight = 5190;
 
-    this.zoom = zoom;
-    this.smoothing = smoothing; // 1 = мгновенно, больше = медленнее
+        this.x = this.worldWidth / 2;
+        this.y = this.worldHeight / 2;
 
-    // Размер viewport (задаётся при рендере)
-    this.viewportW = 0;
-    this.viewportH = 0;
-  }
+        this.targetX = this.x;
+        this.targetY = this.y;
 
-  /**
-   * Установить размер видимой области (вызывается при ресайзе или в render).
-   */
-  setViewport(width, height) {
-    this.viewportW = width;
-    this.viewportH = height;
-  }
+        this.zoom = Number.isFinite(options.zoom)
+            ? options.zoom
+            : 1;
 
-  /**
-   * Установить цель для слежения (позиция персонажа в мире).
-   * @param {{x:number, y:number}} worldPos
-   */
-  follow(worldPos) {
-    this.targetX = worldPos.x;
-    this.targetY = worldPos.y;
-  }
+        this.followSpeed = Number.isFinite(options.followSpeed)
+            ? Math.max(0.01, options.followSpeed)
+            : 7;
 
-  /**
-   * Обновить позицию камеры (плавное приближение к цели).
-   * @param {number} dt  — дельта времени в секундах
-   */
-  update(dt) {
-    if (dt <= 0) return;
-    // Плавное движение: чем больше smoothing, тем медленнее приближение
-    const factor = 1 - Math.exp(-this.smoothing * dt);
-    this.x += (this.targetX - this.x) * factor;
-    this.y += (this.targetY - this.y) * factor;
+        // Совместимость со старым API.
+        this.smoothing = Number.isFinite(options.smoothing)
+            ? Math.max(0.01, options.smoothing)
+            : this.followSpeed;
 
-    // Не даём камере выходить за границы мира (опционально)
-    const halfW = (this.viewportW / 2) / this.zoom;
-    const halfH = (this.viewportH / 2) / this.zoom;
-    this.x = Math.max(halfW, Math.min(this.worldWidth - halfW, this.x));
-    this.y = Math.max(halfH, Math.min(this.worldHeight - halfH, this.y));
-  }
+        this.viewportW = 0;
+        this.viewportH = 0;
 
-  /**
-   * Преобразовать мировые координаты → экранные (SVG или Canvas).
-   * @param {number} wx  — мировая x
-   * @param {number} wy  — мировая y
-   * @returns {{x:number, y:number}}
-   */
-  worldToScreen(wx, wy) {
-    const scale = this.zoom;
-    const screenX = (wx - this.x) * scale + this.viewportW / 2;
-    const screenY = (wy - this.y) * scale + this.viewportH / 2;
-    return { x: screenX, y: screenY };
-  }
+        this.minX = 0;
+        this.maxX = this.worldWidth;
 
-  /**
-   * Преобразовать экранные координаты → мировые (для тапов).
-   * @param {number} sx  — экранная x (в пикселях SVG/Canvas)
-   * @param {number} sy  — экранная y
-   * @returns {{x:number, y:number}}
-   */
-  screenToWorld(sx, sy) {
-    const scale = this.zoom;
-    const wx = (sx - this.viewportW / 2) / scale + this.x;
-    const wy = (sy - this.viewportH / 2) / scale + this.y;
-    return { x: wx, y: wy };
-  }
+        this.minY = 0;
+        this.maxY = this.worldHeight;
+    }
 
-  /**
-   * Мгновенно установить камеру в позицию (без сглаживания).
-   */
-  snapTo(worldPos) {
-    this.x = worldPos.x;
-    this.y = worldPos.y;
-    this.targetX = this.x;
-    this.targetY = this.y;
-  }
+
+    // --------------------------------------------------
+    // WORLD BOUNDS
+    // --------------------------------------------------
+
+    setWorldBounds(
+        width,
+        height
+    ) {
+
+        if (
+            Number.isFinite(width) &&
+            width > 0
+        ) {
+            this.worldWidth = width;
+        }
+
+        if (
+            Number.isFinite(height) &&
+            height > 0
+        ) {
+            this.worldHeight = height;
+        }
+
+        this.minX = 0;
+        this.maxX = this.worldWidth;
+
+        this.minY = 0;
+        this.maxY = this.worldHeight;
+
+        this.x = this.clampX(this.x);
+        this.y = this.clampY(this.y);
+
+        this.targetX = this.clampX(this.targetX);
+        this.targetY = this.clampY(this.targetY);
+    }
+
+
+    // --------------------------------------------------
+    // VIEWPORT
+    // --------------------------------------------------
+
+    setViewport(
+        width,
+        height
+    ) {
+
+        if (
+            Number.isFinite(width) &&
+            width >= 0
+        ) {
+            this.viewportW = width;
+        }
+
+        if (
+            Number.isFinite(height) &&
+            height >= 0
+        ) {
+            this.viewportH = height;
+        }
+
+        this.x = this.clampX(this.x);
+        this.y = this.clampY(this.y);
+    }
+
+
+    // --------------------------------------------------
+    // FOLLOW
+    // --------------------------------------------------
+
+    follow(worldPos) {
+
+        if (
+            !worldPos ||
+            !Number.isFinite(worldPos.x) ||
+            !Number.isFinite(worldPos.y)
+        ) {
+            return;
+        }
+
+        this.targetX = worldPos.x;
+        this.targetY = worldPos.y;
+    }
+
+
+    // --------------------------------------------------
+    // UPDATE
+    // --------------------------------------------------
+
+    update(dt) {
+
+        if (
+            !Number.isFinite(dt) ||
+            dt <= 0
+        ) {
+            return;
+        }
+
+        const speed = Math.max(
+            0.01,
+            this.followSpeed
+        );
+
+        const factor =
+            1 - Math.exp(-speed * dt);
+
+        this.x +=
+            (this.targetX - this.x) *
+            factor;
+
+        this.y +=
+            (this.targetY - this.y) *
+            factor;
+
+        this.x = this.clampX(this.x);
+        this.y = this.clampY(this.y);
+    }
+
+
+    // --------------------------------------------------
+    // WORLD → SCREEN
+    // --------------------------------------------------
+
+    worldToScreen(
+        wx,
+        wy
+    ) {
+
+        const safeX = Number.isFinite(wx)
+            ? wx
+            : 0;
+
+        const safeY = Number.isFinite(wy)
+            ? wy
+            : 0;
+
+        return {
+
+            x:
+                (safeX - this.x) *
+                this.zoom +
+                this.viewportW / 2,
+
+            y:
+                (safeY - this.y) *
+                this.zoom +
+                this.viewportH / 2
+        };
+    }
+
+
+    // --------------------------------------------------
+    // SCREEN → WORLD
+    //
+    // Принимает:
+    //   screenToWorld(x, y)
+    //
+    // И одновременно:
+    //   screenToWorld({ x, y })
+    //
+    // Это важно для текущего InputController.
+    // --------------------------------------------------
+
+    screenToWorld(
+        sx,
+        sy
+    ) {
+
+        let screenX = sx;
+        let screenY = sy;
+
+        if (
+            sx &&
+            typeof sx === 'object'
+        ) {
+
+            screenX = sx.x;
+            screenY = sx.y;
+        }
+
+        if (
+            !Number.isFinite(screenX) ||
+            !Number.isFinite(screenY)
+        ) {
+
+            return {
+                x: this.x,
+                y: this.y
+            };
+        }
+
+        return {
+
+            x:
+                (screenX - this.viewportW / 2) /
+                this.zoom +
+                this.x,
+
+            y:
+                (screenY - this.viewportH / 2) /
+                this.zoom +
+                this.y
+        };
+    }
+
+
+    // --------------------------------------------------
+    // SNAP
+    // --------------------------------------------------
+
+    snapTo(worldPos) {
+
+        if (
+            !worldPos ||
+            !Number.isFinite(worldPos.x) ||
+            !Number.isFinite(worldPos.y)
+        ) {
+            return;
+        }
+
+        this.x = this.clampX(worldPos.x);
+        this.y = this.clampY(worldPos.y);
+
+        this.targetX = this.x;
+        this.targetY = this.y;
+    }
+
+
+    // --------------------------------------------------
+    // ZOOM
+    // --------------------------------------------------
+
+    setZoom(zoom) {
+
+        if (
+            !Number.isFinite(zoom) ||
+            zoom <= 0
+        ) {
+            return;
+        }
+
+        this.zoom = zoom;
+
+        this.x = this.clampX(this.x);
+        this.y = this.clampY(this.y);
+    }
+
+
+    // --------------------------------------------------
+    // INTERNAL CLAMP
+    // --------------------------------------------------
+
+    clampX(value) {
+
+        const halfWorldViewport =
+            this.viewportW > 0
+                ? this.viewportW / (2 * this.zoom)
+                : 0;
+
+        const min =
+            this.minX +
+            Math.min(
+                halfWorldViewport,
+                this.worldWidth / 2
+            );
+
+        const max =
+            this.maxX -
+            Math.min(
+                halfWorldViewport,
+                this.worldWidth / 2
+            );
+
+        if (min > max) {
+            return this.worldWidth / 2;
+        }
+
+        return Math.max(
+            min,
+            Math.min(max, value)
+        );
+    }
+
+
+    clampY(value) {
+
+        const halfWorldViewport =
+            this.viewportH > 0
+                ? this.viewportH / (2 * this.zoom)
+                : 0;
+
+        const min =
+            this.minY +
+            Math.min(
+                halfWorldViewport,
+                this.worldHeight / 2
+            );
+
+        const max =
+            this.maxY -
+            Math.min(
+                halfWorldViewport,
+                this.worldHeight / 2
+            );
+
+        if (min > max) {
+            return this.worldHeight / 2;
+        }
+
+        return Math.max(
+            min,
+            Math.min(max, value)
+        );
+    }
 }
