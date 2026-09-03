@@ -422,3 +422,8 @@ export class Camera {
                     : min
             )
         );
+    }
+}
+
+
+export default Camera;
