@@ -1,33 +1,24 @@
 /**
+ * ASTRAWAY
  * Renderer.js
  *
- * Canvas renderer ASTRAWAY.
+ * Canvas 2D renderer.
  *
- * Архитектура:
+ * Архитектурный контракт:
  *
- *   World coordinates
- *          ↓
- *       Camera
- *          ↓
- *   Canvas screen coordinates
+ * World
+ *   ↓
+ * Camera
+ *   ↓
+ * Renderer
+ *   ↓
+ * Canvas
  *
+ * Renderer не меняет мировые координаты.
  * X остаётся X.
  * Y остаётся Y.
- *
- * Поддерживает:
- *   - портретный мир;
- *   - фон;
- *   - поверхности;
- *   - navigation graph;
- *   - персонажа;
- *   - debug mode;
- *   - resize;
- *   - загрузку background;
- *   - совместимость с Game.js.
  */
-
 export class Renderer {
-
     constructor(
         canvas,
         camera = null,
@@ -35,81 +26,79 @@ export class Renderer {
         character = null,
         gameState = null
     ) {
-
-        this.canvas = canvas;
-
-        if (!this.canvas) {
+        if (!canvas) {
             throw new Error(
                 'Renderer: Canvas не передан.'
             );
         }
-
+        this.canvas =
+            canvas;
         this.ctx =
-            this.canvas.getContext('2d');
-
+            canvas.getContext('2d');
         if (!this.ctx) {
             throw new Error(
-                'Renderer: невозможно получить 2D Canvas context.'
+                'Renderer: Canvas 2D context недоступен.'
             );
         }
-
-        this.camera = camera;
-        this.world = world;
-        this.character = character;
-        this.gameState = gameState;
-
+        this.camera =
+            camera;
+        this.world =
+            world;
+        this.character =
+            character;
+        this.gameState =
+            gameState;
+        this.width = 0;
+        this.height = 0;
         this.viewportW = 0;
         this.viewportH = 0;
-
-        this.backgroundImage = null;
-        this.backgroundLoaded = false;
-
-        this.backgroundPath =
-            'assets/background.jpg .jpeg';
-
-        this.debug = false;
-
         this.devicePixelRatio =
-            Math.max(
-                1,
-                Math.min(
-                    window.devicePixelRatio || 1,
-                    2
-                )
-            );
-
+            1;
+        this.backgroundImage =
+            null;
+        this.backgroundLoaded =
+            false;
+        /*
+         * В имени файла действительно
+         * присутствует пробел.
+         *
+         * Битый background.jpg НЕ используется.
+         */
+        this.backgroundPath =
+            'assets/background.jpg%20.jpeg';
+        this.debug =
+            false;
         this._resizeHandler =
-            () => this.resize();
-
+            () => {
+                this.resize();
+            };
         window.addEventListener(
             'resize',
             this._resizeHandler
         );
-
         this.resize();
     }
-
-
-    // --------------------------------------------------
-    // RESIZE
-    // --------------------------------------------------
-
     resize() {
-
         const rect =
             this.canvas.getBoundingClientRect();
-
         const width =
-            rect.width ||
-            window.innerWidth;
-
+            Number.isFinite(rect.width) &&
+            rect.width > 0
+                ? rect.width
+                : window.innerWidth;
         const height =
-            rect.height ||
-            window.innerHeight;
-
-        this.viewportW = width;
-        this.viewportH = height;
-
+            Number.isFinite(rect.height) &&
+            rect.height > 0
+                ? rect.height
+                : window.innerHeight;
+        this.width =
+            width;
+        this.height =
+            height;
+        this.viewportW =
+            width;
+        this.viewportH =
+            height;
         this.devicePixelRatio =
             Math.max(
                 1,
@@ -118,19 +107,22 @@ export class Renderer {
                     2
                 )
             );
-
         this.canvas.width =
-            Math.round(
-                width *
-                this.devicePixelRatio
+            Math.max(
+                1,
+                Math.round(
+                    width *
+                    this.devicePixelRatio
+                )
             );
-
         this.canvas.height =
-            Math.round(
-                height *
-                this.devicePixelRatio
+            Math.max(
+                1,
+                Math.round(
+                    height *
+                    this.devicePixelRatio
+                )
             );
-
         this.ctx.setTransform(
             this.devicePixelRatio,
             0,
@@ -139,150 +131,80 @@ export class Renderer {
             0,
             0
         );
-
         if (this.camera) {
-
             this.camera.setViewport(
                 width,
                 height
             );
         }
     }
-
-
-    // --------------------------------------------------
-    // BACKGROUND
-    // --------------------------------------------------
-
     loadBackground(
         path = this.backgroundPath
     ) {
-
         return new Promise(
-            (resolve) => {
-
-                const img =
+            resolve => {
+                const image =
                     new Image();
-
-                img.onload =
+                image.onload =
                     () => {
-
                         this.backgroundImage =
-                            img;
-
+                            image;
                         this.backgroundLoaded =
                             true;
-
-                        resolve(img);
-
                         this.render();
-                    };
-
-                img.onerror =
-                    () => {
-
-                        console.warn(
-                            'Renderer: не удалось загрузить фон:',
-                            path
+                        resolve(
+                            image
                         );
-
+                    };
+                image.onerror =
+                    () => {
                         this.backgroundImage =
                             null;
-
                         this.backgroundLoaded =
                             false;
-
-                        resolve(null);
+                        /*
+                         * Важно:
+                         * ошибка изображения
+                         * НЕ останавливает игру.
+                         */
+                        console.warn(
+                            'ASTRAWAY Renderer: фон не загрузился:',
+                            path
+                        );
+                        this.render();
+                        resolve(
+                            null
+                        );
                     };
-
-                img.src = path;
+                image.src =
+                    path;
             }
         );
     }
-
-
-    // --------------------------------------------------
-    // DEBUG
-    // --------------------------------------------------
-
-    setDebug(enabled) {
-
+    setDebug(
+        enabled
+    ) {
         this.debug =
             Boolean(enabled);
-
         if (this.gameState) {
             this.gameState.debugMode =
                 this.debug;
         }
-
         this.render();
     }
-
-
     toggleDebug() {
-
         this.setDebug(
             !this.debug
         );
+        return this.debug;
     }
-
-
-    // --------------------------------------------------
-    // MAIN RENDER
-    // --------------------------------------------------
-
-    render(
-        world = this.world,
-        camera = this.camera
-    ) {
-
-        if (world) {
-            this.world = world;
-        }
-
-        if (camera) {
-            this.camera = camera;
-        }
-
-        this.clear();
-
-        if (!this.camera) {
-            return;
-        }
-
-        // 1. ФОН
-        this._renderBackground();
-
-        // 2. DEBUG WORLD
-        if (this.isDebugEnabled()) {
-
-            this._renderSurfaces();
-
-            this._renderNavGraph();
-
-            this._renderWorldBounds();
-        }
-
-        // 3. CHARACTER
-        this._renderCharacter();
-
-        // 4. DEBUG
-        if (this.isDebugEnabled()) {
-
-            this._renderDebugGrid();
-        }
+    isDebugEnabled() {
+        return this.debug;
     }
-
-
-    // --------------------------------------------------
-    // CLEAR
-    // --------------------------------------------------
-
     clear() {
-
-        this.ctx.save();
-
-        this.ctx.setTransform(
+        const ctx =
+            this.ctx;
+        ctx.setTransform(
             this.devicePixelRatio,
             0,
             0,
@@ -290,164 +212,179 @@ export class Renderer {
             0,
             0
         );
-
-        this.ctx.clearRect(
+        ctx.clearRect(
             0,
             0,
             this.viewportW,
             this.viewportH
         );
-
-        this.ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // BACKGROUND
-    // --------------------------------------------------
-
-    _renderBackground() {
-
+    render(
+        world = null,
+        camera = null
+    ) {
+        if (world) {
+            this.world =
+                world;
+        }
+        if (camera) {
+            this.camera =
+                camera;
+        }
+        if (
+            this.world &&
+            typeof this.world.getCharacter ===
+                'function'
+        ) {
+            this.character =
+                this.world.getCharacter();
+        }
+        this.clear();
+        /*
+         * Даже если камера ещё не готова,
+         * Canvas должен иметь видимый фон.
+         */
+        if (!this.camera) {
+            this._renderFallback();
+            return;
+        }
+        this._renderBackground();
+        if (
+            this.isDebugEnabled()
+        ) {
+            this._renderSurfaces();
+            this._renderNavigation();
+            this._renderWorldBounds();
+        }
+        this._renderCharacter();
+        if (
+            this.isDebugEnabled()
+        ) {
+            this._renderDebugGrid();
+        }
+    }
+    _renderFallback() {
         const ctx =
             this.ctx;
-
-        const image =
-            this.backgroundImage;
-
-        if (!image) {
-
-            // Нейтральный фон до загрузки изображения.
+        ctx.save();
+        ctx.fillStyle =
+            '#111';
+        ctx.fillRect(
+            0,
+            0,
+            this.viewportW,
+            this.viewportH
+        );
+        ctx.restore();
+    }
+    _renderBackground() {
+        const ctx =
+            this.ctx;
+        if (
+            !this.backgroundImage
+        ) {
             ctx.save();
-
             ctx.fillStyle =
                 '#111';
-
             ctx.fillRect(
                 0,
                 0,
                 this.viewportW,
                 this.viewportH
             );
-
             ctx.restore();
-
             return;
         }
-
         const world =
             this.world;
-
         const worldWidth =
             world &&
-            Number.isFinite(world.width)
+            Number.isFinite(
+                world.width
+            )
                 ? world.width
                 : this.camera.worldWidth;
-
         const worldHeight =
             world &&
-            Number.isFinite(world.height)
+            Number.isFinite(
+                world.height
+            )
                 ? world.height
                 : this.camera.worldHeight;
-
         const topLeft =
             this.camera.worldToScreen(
                 0,
                 0
             );
-
         const bottomRight =
             this.camera.worldToScreen(
                 worldWidth,
                 worldHeight
             );
-
-        const screenX =
-            topLeft.x;
-
-        const screenY =
-            topLeft.y;
-
-        const screenW =
+        const screenWidth =
             bottomRight.x -
             topLeft.x;
-
-        const screenH =
+        const screenHeight =
             bottomRight.y -
             topLeft.y;
-
         ctx.save();
-
         ctx.imageSmoothingEnabled =
             true;
-
         ctx.drawImage(
-            image,
-            screenX,
-            screenY,
-            screenW,
-            screenH
+            this.backgroundImage,
+            topLeft.x,
+            topLeft.y,
+            screenWidth,
+            screenHeight
         );
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // SURFACES
-    // --------------------------------------------------
-
     _renderSurfaces() {
-
         if (
             !this.world ||
             !this.world.surfaces
         ) {
             return;
         }
-
         const ctx =
             this.ctx;
-
         ctx.save();
-
-        ctx.lineWidth = 2;
-
+        ctx.lineWidth =
+            3;
         ctx.strokeStyle =
-            'rgba(255,255,255,0.45)';
-
+            'rgba(255,255,255,0.55)';
         for (
             const surface
             of this.world.surfaces.values()
         ) {
-
             if (
                 !surface ||
-                !Array.isArray(surface.points) ||
+                !Array.isArray(
+                    surface.points
+                ) ||
                 surface.points.length < 2
             ) {
                 continue;
             }
-
             ctx.beginPath();
-
             surface.points.forEach(
-                (point, index) => {
-
+                (
+                    point,
+                    index
+                ) => {
                     const screen =
                         this.camera.worldToScreen(
                             point.x,
                             point.y
                         );
-
-                    if (index === 0) {
-
+                    if (
+                        index === 0
+                    ) {
                         ctx.moveTo(
                             screen.x,
                             screen.y
                         );
-
                     } else {
-
                         ctx.lineTo(
                             screen.x,
                             screen.y
@@ -455,48 +392,39 @@ export class Renderer {
                     }
                 }
             );
-
             ctx.stroke();
         }
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // NAVIGATION GRAPH
-    // --------------------------------------------------
-
-    _renderNavGraph() {
-
+    _renderNavigation() {
         if (
             !this.world ||
-            !this.world.navigationGraph
+            !this.world.navigation
         ) {
             return;
         }
-
         const graph =
-            this.world.navigationGraph;
-
+            this.world.navigation;
         const ctx =
             this.ctx;
-
         ctx.save();
-
-        // Рёбра
-        if (graph.edges) {
-
-            ctx.lineWidth = 2;
-
+        /*
+         * NavigationGraph.edges —
+         * настоящий массив.
+         */
+        if (
+            Array.isArray(
+                graph.edges
+            )
+        ) {
+            ctx.lineWidth =
+                2;
             ctx.strokeStyle =
-                'rgba(255,220,50,0.75)';
-
+                'rgba(255,220,50,0.8)';
             for (
                 const edge
-                of graph.edges.values()
+                of graph.edges
             ) {
-
                 if (
                     !edge ||
                     !edge.from ||
@@ -504,68 +432,63 @@ export class Renderer {
                 ) {
                     continue;
                 }
-
-                const a =
+                const from =
                     edge.from.position;
-
-                const b =
+                const to =
                     edge.to.position;
-
-                if (!a || !b) {
+                if (
+                    !from ||
+                    !to
+                ) {
                     continue;
                 }
-
-                const sa =
+                const a =
                     this.camera.worldToScreen(
-                        a.x,
-                        a.y
+                        from.x,
+                        from.y
                     );
-
-                const sb =
+                const b =
                     this.camera.worldToScreen(
-                        b.x,
-                        b.y
+                        to.x,
+                        to.y
                     );
-
                 ctx.beginPath();
-
                 ctx.moveTo(
-                    sa.x,
-                    sa.y
+                    a.x,
+                    a.y
                 );
-
                 ctx.lineTo(
-                    sb.x,
-                    sb.y
+                    b.x,
+                    b.y
                 );
-
                 ctx.stroke();
             }
         }
-
-        // Узлы
-        if (graph.nodes) {
-
+        /*
+         * NavigationGraph.nodes —
+         * Map.
+         */
+        if (
+            graph.nodes &&
+            typeof graph.nodes.values ===
+                'function'
+        ) {
             for (
                 const node
                 of graph.nodes.values()
             ) {
-
                 if (
                     !node ||
                     !node.position
                 ) {
                     continue;
                 }
-
                 const screen =
                     this.camera.worldToScreen(
                         node.position.x,
                         node.position.y
                     );
-
                 ctx.beginPath();
-
                 ctx.arc(
                     screen.x,
                     screen.y,
@@ -573,114 +496,99 @@ export class Renderer {
                     0,
                     Math.PI * 2
                 );
-
                 ctx.fillStyle =
-                    node.isEndNode
-                        ? '#ff4444'
-                        : '#44ff44';
-
+                    '#44ff44';
                 ctx.fill();
             }
         }
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // CHARACTER
-    // --------------------------------------------------
-
     _renderCharacter() {
-
         const character =
             this.character;
-
-        if (!character) {
-            return;
-        }
-
-        const position =
-            character.worldPosition ||
-            character.position;
-
         if (
-            !position ||
-            !Number.isFinite(position.x) ||
-            !Number.isFinite(position.y)
+            !character ||
+            !character.position
         ) {
             return;
         }
-
+        const position =
+            character.position;
+        if (
+            !Number.isFinite(
+                position.x
+            ) ||
+            !Number.isFinite(
+                position.y
+            )
+        ) {
+            return;
+        }
         const screen =
             this.camera.worldToScreen(
                 position.x,
                 position.y
             );
-
         const ctx =
             this.ctx;
-
         ctx.save();
-
         /*
-         * Временный визуальный персонаж.
+         * Временный диагностический
+         * персонаж.
          *
-         * В дальнейшем здесь подключается
-         * реальный skeletal renderer.
+         * Реальный Skeleton уже существует
+         * в Character, но отдельного
+         * skeletal Canvas renderer пока
+         * нет.
          */
-
         const size =
             Math.max(
-                16,
+                18,
                 28 *
                 this.camera.zoom
             );
-
         ctx.translate(
             screen.x,
             screen.y
         );
-
-        let angle = 0;
-
-        if (
+        const angle =
             Number.isFinite(
                 character.moveAngle
             )
-        ) {
-            angle =
-                character.moveAngle;
-        }
-
-        ctx.rotate(angle);
-
-        // Тело
+                ? character.moveAngle
+                : 0;
+        ctx.rotate(
+            angle
+        );
         ctx.fillStyle =
             '#e8c87a';
-
         ctx.strokeStyle =
             '#4a3a2a';
-
-        ctx.lineWidth = 2;
-
+        ctx.lineWidth =
+            2;
         ctx.beginPath();
-
-        ctx.roundRect(
-            -size * 0.35,
-            -size * 0.75,
-            size * 0.7,
-            size * 1.3,
-            size * 0.12
-        );
-
+        if (
+            typeof ctx.roundRect ===
+            'function'
+        ) {
+            ctx.roundRect(
+                -size * 0.35,
+                -size * 0.75,
+                size * 0.7,
+                size * 1.3,
+                size * 0.12
+            );
+        } else {
+            ctx.rect(
+                -size * 0.35,
+                -size * 0.75,
+                size * 0.7,
+                size * 1.3
+            );
+        }
         ctx.fill();
-
         ctx.stroke();
-
-        // Голова
         ctx.beginPath();
-
         ctx.arc(
             0,
             -size * 0.95,
@@ -688,358 +596,132 @@ export class Renderer {
             0,
             Math.PI * 2
         );
-
         ctx.fill();
-
         ctx.stroke();
-
-        ctx.restore();
-
-        if (
-            this.isDebugEnabled()
-        ) {
-
-            this._renderCharacterDebug(
-                character,
-                position,
-                screen
-            );
-        }
-    }
-
-
-    // --------------------------------------------------
-    // CHARACTER DEBUG
-    // --------------------------------------------------
-
-    _renderCharacterDebug(
-        character,
-        position,
-        screen
-    ) {
-
-        const ctx =
-            this.ctx;
-
-        ctx.save();
-
-        // Центр персонажа
-        ctx.beginPath();
-
-        ctx.arc(
-            screen.x,
-            screen.y,
-            4,
-            0,
-            Math.PI * 2
-        );
-
-        ctx.fillStyle =
-            '#00ffff';
-
-        ctx.fill();
-
-        // Направление
-        if (
-            Number.isFinite(
-                character.moveAngle
-            )
-        ) {
-
-            const length =
-                70 *
-                this.camera.zoom;
-
-            const endX =
-                screen.x +
-                Math.cos(
-                    character.moveAngle
-                ) *
-                length;
-
-            const endY =
-                screen.y +
-                Math.sin(
-                    character.moveAngle
-                ) *
-                length;
-
-            ctx.beginPath();
-
-            ctx.moveTo(
-                screen.x,
-                screen.y
-            );
-
-            ctx.lineTo(
-                endX,
-                endY
-            );
-
-            ctx.strokeStyle =
-                '#ffaa00';
-
-            ctx.lineWidth = 3;
-
-            ctx.stroke();
-        }
-
-        // Текущая поверхность
-        if (
-            character.currentSurface &&
-            Number.isFinite(
-                character.currentSurfaceT
-            )
-        ) {
-
-            const surface =
-                character.currentSurface;
-
-            const frame =
-                surface.getFrame(
-                    character.currentSurfaceT
-                );
-
-            if (
-                frame &&
-                frame.tangent
-            ) {
-
-                const length =
-                    80 *
-                    this.camera.zoom;
-
-                const end =
-                    this.camera.worldToScreen(
-                        position.x +
-                        frame.tangent.x *
-                        length,
-
-                        position.y +
-                        frame.tangent.y *
-                        length
-                    );
-
-                ctx.beginPath();
-
-                ctx.moveTo(
-                    screen.x,
-                    screen.y
-                );
-
-                ctx.lineTo(
-                    end.x,
-                    end.y
-                );
-
-                ctx.strokeStyle =
-                    '#00ffcc';
-
-                ctx.lineWidth = 2;
-
-                ctx.stroke();
-            }
-        }
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // WORLD BOUNDS
-    // --------------------------------------------------
-
     _renderWorldBounds() {
-
-        const world =
-            this.world;
-
-        if (!world) {
+        if (!this.world) {
             return;
         }
-
         const width =
-            Number.isFinite(world.width)
-                ? world.width
+            Number.isFinite(
+                this.world.width
+            )
+                ? this.world.width
                 : this.camera.worldWidth;
-
         const height =
-            Number.isFinite(world.height)
-                ? world.height
+            Number.isFinite(
+                this.world.height
+            )
+                ? this.world.height
                 : this.camera.worldHeight;
-
         const a =
             this.camera.worldToScreen(
                 0,
                 0
             );
-
         const b =
             this.camera.worldToScreen(
                 width,
                 height
             );
-
         const ctx =
             this.ctx;
-
         ctx.save();
-
         ctx.strokeStyle =
-            'rgba(255,0,0,0.6)';
-
-        ctx.lineWidth = 2;
-
+            'rgba(255,0,0,0.7)';
+        ctx.lineWidth =
+            2;
         ctx.strokeRect(
             a.x,
             a.y,
             b.x - a.x,
             b.y - a.y
         );
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // DEBUG GRID
-    // --------------------------------------------------
-
     _renderDebugGrid() {
-
-        const world =
-            this.world;
-
-        if (!world) {
-            return;
-        }
-
-        const width =
-            Number.isFinite(world.width)
-                ? world.width
-                : this.camera.worldWidth;
-
-        const height =
-            Number.isFinite(world.height)
-                ? world.height
-                : this.camera.worldHeight;
-
-        const step = 200;
-
         const ctx =
             this.ctx;
-
+        const step =
+            100;
         ctx.save();
-
+        ctx.lineWidth =
+            1;
         ctx.strokeStyle =
-            'rgba(100,100,100,0.22)';
-
-        ctx.lineWidth = 1;
-
+            'rgba(255,255,255,0.08)';
         for (
             let x = 0;
-            x <= width;
+            x <= this.world.width;
             x += step
         ) {
-
             const a =
                 this.camera.worldToScreen(
                     x,
                     0
                 );
-
             const b =
                 this.camera.worldToScreen(
                     x,
-                    height
+                    this.world.height
                 );
-
             ctx.beginPath();
-
             ctx.moveTo(
                 a.x,
                 a.y
             );
-
             ctx.lineTo(
                 b.x,
                 b.y
             );
-
             ctx.stroke();
         }
-
         for (
             let y = 0;
-            y <= height;
+            y <= this.world.height;
             y += step
         ) {
-
             const a =
                 this.camera.worldToScreen(
                     0,
                     y
                 );
-
             const b =
                 this.camera.worldToScreen(
-                    width,
+                    this.world.width,
                     y
                 );
-
             ctx.beginPath();
-
             ctx.moveTo(
                 a.x,
                 a.y
             );
-
             ctx.lineTo(
                 b.x,
                 b.y
             );
-
             ctx.stroke();
         }
-
         ctx.restore();
     }
-
-
-    // --------------------------------------------------
-    // DEBUG STATE
-    // --------------------------------------------------
-
-    isDebugEnabled() {
-
-        return Boolean(
-            this.debug ||
-            (
-                this.gameState &&
-                this.gameState.debugMode
-            )
-        );
-    }
-
-
-    // --------------------------------------------------
-    // DESTROY
-    // --------------------------------------------------
-
     destroy() {
-
         window.removeEventListener(
             'resize',
             this._resizeHandler
         );
-
         this.backgroundImage =
             null;
-
-        this.ctx =
+        this.character =
             null;
-
+        this.world =
+            null;
+        this.camera =
+            null;
         this.canvas =
+            null;
+        this.ctx =
             null;
     }
 }
+export default Renderer;
