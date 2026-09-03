@@ -1,8 +1,13 @@
+// ============================================================
+// engine/world/Pathfinder.js
+// ASTRAWAY — A* + movement/transition path metadata
+// ============================================================
+
 import {
     distance,
     distanceSq,
     finitePoint
-} from "../character/MathUtils.js";
+} from '../character/MathUtils.js';
 
 
 export class Pathfinder {
@@ -11,7 +16,7 @@ export class Pathfinder {
 
         if (!graph) {
             throw new Error(
-                "Pathfinder: NavigationGraph is required"
+                'Pathfinder: NavigationGraph is required'
             );
         }
 
@@ -224,6 +229,11 @@ export class Pathfinder {
                     continue;
                 }
 
+                const transitionPenalty =
+                    this.getTransitionPenalty(
+                        edge
+                    );
+
                 const tentativeG =
                     (
                         gScore.get(
@@ -231,7 +241,8 @@ export class Pathfinder {
                         ) ??
                         Infinity
                     ) +
-                    edge.getCost();
+                    edge.getCost() +
+                    transitionPenalty;
 
                 const knownG =
                     gScore.get(
@@ -277,6 +288,34 @@ export class Pathfinder {
     }
 
 
+    getTransitionPenalty(edge) {
+
+        if (!edge) {
+            return 0;
+        }
+
+        switch (
+            String(
+                edge.type ||
+                ''
+            ).toUpperCase()
+        ) {
+
+            case 'HANG':
+                return 140;
+
+            case 'SWING':
+                return 220;
+
+            case 'JUMP':
+                return 110;
+
+            default:
+                return 0;
+        }
+    }
+
+
     reconstructPath(
         cameFrom,
         current
@@ -303,9 +342,12 @@ export class Pathfinder {
             cursor =
                 record.node;
 
-            path.push(
-                cursor
-            );
+            path.push({
+                ...cursor,
+
+                _edgeFromPrevious:
+                    record.edge
+            });
         }
 
         path.reverse();
@@ -320,9 +362,7 @@ export class Pathfinder {
     ) {
 
         let best = null;
-
-        let bestScore =
-            Infinity;
+        let bestScore = Infinity;
 
         for (
             const node
@@ -377,76 +417,106 @@ export class Pathfinder {
         node
     ) {
 
-        const result = [];
-
         if (
             node &&
             node.surface
         ) {
 
+            const surface =
+                node.surface;
+
             const startT =
-                node.surface.projectT(
+                surface.projectT(
                     startPoint
                 );
 
             const targetT =
-                node.surface.projectT(
+                surface.projectT(
                     targetPoint
                 );
 
             const startProjected =
-                node.surface.getPoint(
+                surface.getPoint(
                     startT
                 );
 
             const targetProjected =
-                node.surface.getPoint(
+                surface.getPoint(
                     targetT
                 );
 
-            result.push({
-                x: startProjected.x,
-                y: startProjected.y,
-                surface:
-                    node.surface,
-                t: startT
-            });
+            return [
+                {
+                    x:
+                        startProjected.x,
 
-            if (
-                distanceSq(
-                    startProjected,
-                    targetProjected
-                ) >
-                0.0001
-            ) {
+                    y:
+                        startProjected.y,
 
-                result.push({
-                    x: targetProjected.x,
-                    y: targetProjected.y,
-                    surface:
-                        node.surface,
-                    t: targetT
-                });
-            }
+                    surface,
 
-            return result;
+                    t:
+                        startT,
+
+                    movementType:
+                        surface.getMovementType(
+                            startT
+                        ),
+
+                    edgeType:
+                        null,
+
+                    transition:
+                        null
+                },
+
+                {
+                    x:
+                        targetProjected.x,
+
+                    y:
+                        targetProjected.y,
+
+                    surface,
+
+                    t:
+                        targetT,
+
+                    movementType:
+                        surface.getMovementType(
+                            targetT
+                        ),
+
+                    edgeType:
+                        null,
+
+                    transition:
+                        null
+                }
+            ];
         }
 
-        result.push({
-            x: startPoint.x,
-            y: startPoint.y,
-            surface: null,
-            t: 0
-        });
+        return [
+            {
+                x: startPoint.x,
+                y: startPoint.y,
+                surface: null,
+                t: 0,
+                movementType: 'WALK',
+                edgeType: null,
+                transition: null
+            },
 
-        result.push({
-            x: targetPoint.x,
-            y: targetPoint.y,
-            surface: null,
-            t: 0
-        });
-
-        return result;
+            {
+                x: targetPoint.x,
+                y: targetPoint.y,
+                surface: null,
+                t: 0,
+                movementType: 'WALK',
+                edgeType: null,
+                transition: null
+            }
+        ];
     }
 
 
@@ -464,44 +534,88 @@ export class Pathfinder {
 
         const path = [];
 
+        const first =
+            nodePath[0];
+
         this.addPathPoint(
             path,
             startPoint,
-            nodePath[0].surface,
-            nodePath[0].t
+            first.surface,
+            first.t,
+            {
+                movementType:
+                    first.surface
+                        ? first.surface.getMovementType(
+                            first.t
+                        )
+                        : 'WALK',
+
+                edgeType:
+                    null,
+
+                transition:
+                    null
+            }
         );
 
+
         for (
-            const node
-            of nodePath
+            let i = 0;
+            i < nodePath.length;
+            i++
         ) {
+
+            const node =
+                nodePath[i];
 
             if (!node) {
                 continue;
             }
 
+            const edge =
+                node._edgeFromPrevious ||
+                null;
+
+            const edgeType =
+                edge
+                    ? String(
+                        edge.type ||
+                        ''
+                    ).toUpperCase()
+                    : null;
+
+            const isTransition =
+                edgeType === 'JUMP' ||
+                edgeType === 'HANG' ||
+                edgeType === 'SWING';
+
+            const movementType =
+                node.surface
+                    ? node.surface.getMovementType(
+                        node.t
+                    )
+                    : 'WALK';
+
             this.addPathPoint(
                 path,
                 node.position,
                 node.surface,
-                node.t
+                node.t,
+                {
+                    movementType,
+                    edgeType,
+                    transition:
+                        isTransition
+                            ? edgeType
+                            : null,
+
+                    isEndNode:
+                        node.isEndNode === true
+                }
             );
         }
 
-        /*
-         * Критически важно:
-         *
-         * Последняя точка приходит
-         * из тапа пользователя.
-         *
-         * Она может находиться рядом
-         * с поверхностью, но не точно
-         * на ней.
-         *
-         * Если последний узел имеет
-         * поверхность, проектируем тап
-         * обратно на эту поверхность.
-         */
+
         const lastNode =
             nodePath[
                 nodePath.length - 1
@@ -522,32 +636,40 @@ export class Pathfinder {
 
             if (
                 projected &&
-                projected.point &&
-                Number.isFinite(
-                    projected.t
-                )
+                projected.point
             ) {
+
+                const movementType =
+                    lastSurface.getMovementType(
+                        projected.t
+                    );
 
                 this.addPathPoint(
                     path,
                     projected.point,
                     lastSurface,
-                    projected.t
+                    projected.t,
+                    {
+                        movementType,
+                        edgeType: null,
+                        transition: null
+                    }
                 );
 
                 return path;
             }
         }
 
-        /*
-         * Если поверхность отсутствует,
-         * сохраняем исходную точку.
-         */
         this.addPathPoint(
             path,
             targetPoint,
             null,
-            0
+            0,
+            {
+                movementType: 'WALK',
+                edgeType: null,
+                transition: null
+            }
         );
 
         return path;
@@ -558,7 +680,8 @@ export class Pathfinder {
         path,
         point,
         surface,
-        t
+        t,
+        metadata = {}
     ) {
 
         if (
@@ -588,8 +711,7 @@ export class Pathfinder {
             distanceSq(
                 previous,
                 point
-            ) <
-            0.0001
+            ) < 0.0001
         ) {
 
             if (
@@ -601,15 +723,39 @@ export class Pathfinder {
                     safeT;
             }
 
+            Object.assign(
+                previous,
+                metadata
+            );
+
             return;
         }
 
         path.push({
             x: point.x,
             y: point.y,
+
             surface:
-                surface || null,
-            t: safeT
+                surface ||
+                null,
+
+            t:
+                safeT,
+
+            movementType:
+                metadata.movementType ||
+                'WALK',
+
+            edgeType:
+                metadata.edgeType ||
+                null,
+
+            transition:
+                metadata.transition ||
+                null,
+
+            isEndNode:
+                metadata.isEndNode === true
         });
     }
 
@@ -628,9 +774,7 @@ export class Pathfinder {
         }
 
         let best = null;
-
-        let bestDistance =
-            Infinity;
+        let bestDistance = Infinity;
 
         for (
             const surface
@@ -687,12 +831,18 @@ export class Pathfinder {
         return (
             this.graph &&
             typeof this.graph.getNode ===
-                "function" &&
+                'function' &&
             typeof this.graph.getNeighbors ===
-                "function"
+                'function'
         );
     }
 }
 
 
 export default Pathfinder;
+
+
+// ============================================================
+// NEXT TASK:
+// Подключить RouteNetwork.js к World.js; Character пока НЕ менять.
+// ============================================================
