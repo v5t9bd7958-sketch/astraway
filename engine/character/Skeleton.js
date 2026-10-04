@@ -1,13 +1,40 @@
 // ASTRAWAY 2.0
-// Procedural Character Skeleton
-// Local transforms -> World transforms
+// Procedural 29-bone character skeleton
 //
-// Skeleton contains only character geometry.
-// Animation and IK modify transforms.
-// Rendering is handled elsewhere.
+// Canonical anatomy:
+//
+// pelvis
+// ├─ spineLower → spineMid → spineUpper → chest → neck → head
+// │                                            ├─ eyeL
+// │                                            └─ eyeR
+// │
+// │                                            ├─ clavicleL
+// │                                            │    └─ upperArmL
+// │                                            │         └─ forearmL
+// │                                            │              └─ wristL
+// │                                            │                   └─ handL
+// │                                            │
+// │                                            └─ clavicleR
+// │                                                 └─ upperArmR
+// │                                                      └─ forearmR
+// │                                                           └─ wristR
+// │                                                                └─ handR
+// │
+// ├─ thighL → shinL → ankleL → footL → toeL
+// └─ thighR → shinR → ankleR → footR → toeR
+//
+// 29 bones total.
+//
+// This class owns only:
+// - anatomical hierarchy
+// - local transforms
+// - world transforms
+// - bone metadata
+// - skeleton validation
+//
+// Animation, gait, IK, gravity and rendering stay outside.
 
 import {
-    clamp,
     dampAngle,
     finite,
     normalizeAngle
@@ -16,12 +43,22 @@ import {
 
 class Bone {
 
-    constructor(name, parent = null, length = 0) {
-
+    constructor(
+        name,
+        parent = null,
+        length = 0,
+        role = "joint",
+        side = "center"
+    ) {
         this.name = name;
         this.parent = parent;
 
+        // Authoritative anatomical segment length.
         this.length = Math.max(0, finite(length));
+
+        // Metadata for future IK / animation / rendering systems.
+        this.role = role;
+        this.side = side;
 
         // Local transform.
         this.localX = 0;
@@ -40,7 +77,6 @@ class Bone {
 
 
     setLocalPosition(x, y) {
-
         this.localX = finite(x);
         this.localY = finite(y);
 
@@ -49,7 +85,6 @@ class Bone {
 
 
     setLocalAngle(angle) {
-
         this.localAngle = normalizeAngle(
             finite(angle)
         );
@@ -59,7 +94,6 @@ class Bone {
 
 
     setWorldPosition(x, y) {
-
         this.worldX = finite(x);
         this.worldY = finite(y);
 
@@ -68,7 +102,6 @@ class Bone {
 
 
     setWorldAngle(angle) {
-
         this.worldAngle = normalizeAngle(
             finite(angle)
         );
@@ -78,7 +111,6 @@ class Bone {
 
 
     getWorldPosition() {
-
         return {
             x: this.worldX,
             y: this.worldY
@@ -87,7 +119,6 @@ class Bone {
 
 
     getWorldDirection() {
-
         return {
             x: Math.cos(this.worldAngle),
             y: Math.sin(this.worldAngle)
@@ -105,6 +136,7 @@ export default class Skeleton {
         this.root = null;
 
         this._build();
+
         this.updateWorldTransforms();
     }
 
@@ -114,7 +146,9 @@ export default class Skeleton {
         parentName = null,
         x = 0,
         y = 0,
-        length = 0
+        length = 0,
+        role = "joint",
+        side = "center"
     ) {
 
         const parent = parentName
@@ -130,16 +164,29 @@ export default class Skeleton {
         const bone = new Bone(
             name,
             parent,
-            length
+            length,
+            role,
+            side
         );
 
-        bone.setLocalPosition(x, y);
+        bone.setLocalPosition(
+            x,
+            y
+        );
 
-        this.bones.set(name, bone);
+        this.bones.set(
+            name,
+            bone
+        );
 
         if (parent) {
-            parent.children.push(bone);
+
+            parent.children.push(
+                bone
+            );
+
         } else if (!this.root) {
+
             this.root = bone;
         }
 
@@ -150,236 +197,411 @@ export default class Skeleton {
     _build() {
 
         /*
-         *                head
-         *                 |
-         *                neck
-         *                 |
-         *               chest
-         *             /       \
-         *        shoulderL   shoulderR
-         *           |             |
-         *         elbow         elbow
-         *           |             |
-         *         wrist         wrist
+         * =========================================================
+         * ROOT
+         * =========================================================
          *
-         *                |
-         *              pelvis
-         *             /      \
-         *          hipL      hipR
-         *           |          |
-         *         knee       knee
-         *           |          |
-         *         ankle      ankle
-         *           |          |
-         *          foot       foot
+         * pelvis is the single anatomical root.
          *
-         * Extra eye bones allow the renderer to aim the eyes
-         * independently from the head.
+         * The pelvis is the anchor for:
+         * - body orientation
+         * - gravity frame
+         * - balance
+         * - leg IK
+         * - center of mass
          */
 
-
-        // ROOT
 
         this._addBone(
             "pelvis",
             null,
             0,
             0,
-            0
+            0,
+            "pelvis",
+            "center"
         );
 
 
-        // SPINE
+        /*
+         * =========================================================
+         * SPINE
+         * =========================================================
+         *
+         * Four torso segments before neck:
+         *
+         * pelvis
+         *   ↓
+         * spineLower
+         *   ↓
+         * spineMid
+         *   ↓
+         * spineUpper
+         *   ↓
+         * chest
+         *   ↓
+         * neck
+         *   ↓
+         * head
+         *
+         * This gives future procedural motion enough degrees
+         * of freedom for bending, balance and secondary motion.
+         */
+
 
         this._addBone(
-            "spine",
+            "spineLower",
             "pelvis",
             0,
-            -24,
-            24
+            -12,
+            12,
+            "spine",
+            "center"
+        );
+
+        this._addBone(
+            "spineMid",
+            "spineLower",
+            0,
+            -12,
+            12,
+            "spine",
+            "center"
+        );
+
+        this._addBone(
+            "spineUpper",
+            "spineMid",
+            0,
+            -11,
+            11,
+            "spine",
+            "center"
         );
 
         this._addBone(
             "chest",
-            "spine",
+            "spineUpper",
             0,
-            -24,
-            24
+            -12,
+            12,
+            "chest",
+            "center"
         );
 
         this._addBone(
             "neck",
             "chest",
             0,
-            -16,
-            16
+            -10,
+            10,
+            "neck",
+            "center"
         );
 
         this._addBone(
             "head",
             "neck",
             0,
-            -14,
-            28
+            -12,
+            18,
+            "head",
+            "center"
         );
 
 
-        // EYES
+        /*
+         * =========================================================
+         * EYES
+         * =========================================================
+         *
+         * These are marker bones.
+         * They are intentionally zero-length.
+         *
+         * They branch from the head rather than continuing the
+         * head segment.
+         */
+
 
         this._addBone(
             "eyeL",
             "head",
-            -8,
+            -7,
             -4,
-            0
+            0,
+            "eye",
+            "left"
         );
 
         this._addBone(
             "eyeR",
             "head",
-            8,
+            7,
             -4,
-            0
-        );
-
-
-        // LEFT ARM
-
-        this._addBone(
-            "shoulderL",
-            "chest",
-            -14,
-            -8,
-            14
-        );
-
-        this._addBone(
-            "elbowL",
-            "shoulderL",
-            -14,
             0,
-            22
+            "eye",
+            "right"
+        );
+
+
+        /*
+         * =========================================================
+         * LEFT ARM
+         * =========================================================
+         *
+         * chest
+         *   ↓
+         * clavicle
+         *   ↓
+         * upperArm
+         *   ↓
+         * forearm
+         *   ↓
+         * wrist
+         *   ↓
+         * hand
+         *
+         * The clavicle creates the missing shoulder structure
+         * from the old skeleton.
+         */
+
+
+        this._addBone(
+            "clavicleL",
+            "chest",
+            -5,
+            -3,
+            9,
+            "clavicle",
+            "left"
+        );
+
+        this._addBone(
+            "upperArmL",
+            "clavicleL",
+            -9,
+            0,
+            24,
+            "upperArm",
+            "left"
+        );
+
+        this._addBone(
+            "forearmL",
+            "upperArmL",
+            -24,
+            0,
+            22,
+            "forearm",
+            "left"
         );
 
         this._addBone(
             "wristL",
-            "elbowL",
+            "forearmL",
             -22,
             0,
-            18
+            0,
+            "wrist",
+            "left"
         );
 
         this._addBone(
             "handL",
             "wristL",
-            -18,
             0,
-            10
+            0,
+            9,
+            "hand",
+            "left"
         );
 
 
-        // RIGHT ARM
+        /*
+         * =========================================================
+         * RIGHT ARM
+         * =========================================================
+         */
+
 
         this._addBone(
-            "shoulderR",
+            "clavicleR",
             "chest",
-            14,
-            -8,
-            14
+            5,
+            -3,
+            9,
+            "clavicle",
+            "right"
         );
 
         this._addBone(
-            "elbowR",
-            "shoulderR",
-            14,
+            "upperArmR",
+            "clavicleR",
+            9,
             0,
-            22
+            24,
+            "upperArm",
+            "right"
+        );
+
+        this._addBone(
+            "forearmR",
+            "upperArmR",
+            24,
+            0,
+            22,
+            "forearm",
+            "right"
         );
 
         this._addBone(
             "wristR",
-            "elbowR",
+            "forearmR",
             22,
             0,
-            18
+            0,
+            "wrist",
+            "right"
         );
 
         this._addBone(
             "handR",
             "wristR",
-            18,
             0,
-            10
+            0,
+            9,
+            "hand",
+            "right"
         );
 
 
-        // LEFT LEG
+        /*
+         * =========================================================
+         * LEFT LEG
+         * =========================================================
+         *
+         * pelvis
+         *   ↓
+         * thigh  = hip → knee
+         *   ↓
+         * shin   = knee → ankle
+         *   ↓
+         * ankle
+         *   ↓
+         * foot
+         *   ↓
+         * toe
+         *
+         * The thigh origin is the actual hip joint.
+         */
+
 
         this._addBone(
-            "hipL",
+            "thighL",
             "pelvis",
-            -10,
-            4,
-            16
+            -9,
+            3,
+            34,
+            "thigh",
+            "left"
         );
 
         this._addBone(
-            "kneeL",
-            "hipL",
+            "shinL",
+            "thighL",
             0,
-            27,
-            27
+            34,
+            32,
+            "shin",
+            "left"
         );
 
         this._addBone(
             "ankleL",
-            "kneeL",
+            "shinL",
             0,
-            27,
-            10
+            32,
+            5,
+            "ankle",
+            "left"
         );
 
         this._addBone(
             "footL",
             "ankleL",
-            7,
+            5,
             0,
-            12
+            13,
+            "foot",
+            "left"
+        );
+
+        this._addBone(
+            "toeL",
+            "footL",
+            13,
+            0,
+            5,
+            "toe",
+            "left"
         );
 
 
-        // RIGHT LEG
+        /*
+         * =========================================================
+         * RIGHT LEG
+         * =========================================================
+         */
+
 
         this._addBone(
-            "hipR",
+            "thighR",
             "pelvis",
-            10,
-            4,
-            16
+            9,
+            3,
+            34,
+            "thigh",
+            "right"
         );
 
         this._addBone(
-            "kneeR",
-            "hipR",
+            "shinR",
+            "thighR",
             0,
-            27,
-            27
+            34,
+            32,
+            "shin",
+            "right"
         );
 
         this._addBone(
             "ankleR",
-            "kneeR",
+            "shinR",
             0,
-            27,
-            10
+            32,
+            5,
+            "ankle",
+            "right"
         );
 
         this._addBone(
             "footR",
             "ankleR",
-            7,
+            5,
             0,
-            12
+            13,
+            "foot",
+            "right"
+        );
+
+        this._addBone(
+            "toeR",
+            "footR",
+            13,
+            0,
+            5,
+            "toe",
+            "right"
         );
     }
 
@@ -444,28 +666,38 @@ export default class Skeleton {
     }
 
 
-    _updateBoneWorld(bone, parent) {
+    _updateBoneWorld(
+        bone,
+        parent
+    ) {
 
         if (!parent) {
 
-            bone.worldX = bone.localX;
-            bone.worldY = bone.localY;
+            bone.worldX =
+                bone.localX;
 
-            bone.worldAngle = normalizeAngle(
-                bone.localAngle
-            );
+            bone.worldY =
+                bone.localY;
 
-            bone.worldScale = bone.localScale;
+            bone.worldAngle =
+                normalizeAngle(
+                    bone.localAngle
+                );
+
+            bone.worldScale =
+                bone.localScale;
 
         } else {
 
-            const cos = Math.cos(
-                parent.worldAngle
-            );
+            const cos =
+                Math.cos(
+                    parent.worldAngle
+                );
 
-            const sin = Math.sin(
-                parent.worldAngle
-            );
+            const sin =
+                Math.sin(
+                    parent.worldAngle
+                );
 
             const scaledX =
                 bone.localX *
@@ -514,29 +746,39 @@ export default class Skeleton {
         dt = 0
     ) {
 
-        const bone = this.requireBone(name);
+        const bone =
+            this.requireBone(name);
 
-        const parent = bone.parent;
+        const parent =
+            bone.parent;
 
-        const target = normalizeAngle(
-            worldAngle
-        );
-
-        let finalAngle = target;
-
-        if (smoothing > 0 && dt > 0) {
-
-            finalAngle = dampAngle(
-                bone.worldAngle,
-                target,
-                smoothing,
-                dt
+        const target =
+            normalizeAngle(
+                worldAngle
             );
+
+        let finalAngle =
+            target;
+
+        if (
+            smoothing > 0 &&
+            dt > 0
+        ) {
+
+            finalAngle =
+                dampAngle(
+                    bone.worldAngle,
+                    target,
+                    smoothing,
+                    dt
+                );
         }
+
 
         if (!parent) {
 
-            bone.localAngle = finalAngle;
+            bone.localAngle =
+                finalAngle;
 
         } else {
 
@@ -557,15 +799,23 @@ export default class Skeleton {
         y
     ) {
 
-        const bone = this.requireBone(name);
+        const bone =
+            this.requireBone(name);
 
-        const targetX = finite(x);
-        const targetY = finite(y);
+        const targetX =
+            finite(x);
+
+        const targetY =
+            finite(y);
+
 
         if (!bone.parent) {
 
-            bone.localX = targetX;
-            bone.localY = targetY;
+            bone.localX =
+                targetX;
+
+            bone.localY =
+                targetY;
 
             this.updateWorldTransforms();
 
@@ -573,7 +823,8 @@ export default class Skeleton {
         }
 
 
-        const parent = bone.parent;
+        const parent =
+            bone.parent;
 
         const dx =
             targetX -
@@ -593,19 +844,23 @@ export default class Skeleton {
                 -parent.worldAngle
             );
 
-        bone.localX =
-            (dx * cos - dy * sin) /
+        const scale =
             Math.max(
                 parent.worldScale,
                 0.000001
             );
 
+        bone.localX =
+            (
+                dx * cos -
+                dy * sin
+            ) / scale;
+
         bone.localY =
-            (dx * sin + dy * cos) /
-            Math.max(
-                parent.worldScale,
-                0.000001
-            );
+            (
+                dx * sin +
+                dy * cos
+            ) / scale;
 
         this.updateWorldTransforms();
     }
@@ -617,23 +872,28 @@ export default class Skeleton {
         localY = 0
     ) {
 
-        const bone = this.requireBone(
-            boneName
-        );
+        const bone =
+            this.requireBone(
+                boneName
+            );
 
-        const cos = Math.cos(
-            bone.worldAngle
-        );
+        const cos =
+            Math.cos(
+                bone.worldAngle
+            );
 
-        const sin = Math.sin(
-            bone.worldAngle
-        );
+        const sin =
+            Math.sin(
+                bone.worldAngle
+            );
 
         const scaledX =
-            localX * bone.worldScale;
+            localX *
+            bone.worldScale;
 
         const scaledY =
-            localY * bone.worldScale;
+            localY *
+            bone.worldScale;
 
         return {
             x:
@@ -655,41 +915,94 @@ export default class Skeleton {
     ) {
 
         const start =
-            this.getBone(startName);
+            this.getBone(
+                startName
+            );
 
         const end =
-            this.getBone(endName);
+            this.getBone(
+                endName
+            );
 
         if (!start || !end) {
             return [];
         }
 
-
         const chain = [];
 
-        let current = end;
+        let current =
+            end;
 
         while (current) {
 
-            chain.unshift(current);
+            chain.unshift(
+                current
+            );
 
-            if (current === start) {
+            if (
+                current ===
+                start
+            ) {
+
                 return chain;
             }
 
-            current = current.parent;
+            current =
+                current.parent;
         }
 
         return [];
     }
 
 
+    getAnatomicalLength(name) {
+
+        return this.requireBone(
+            name
+        ).length;
+    }
+
+
+    getAnatomicalChain(
+        startName,
+        endName
+    ) {
+
+        return this
+            .getBoneChain(
+                startName,
+                endName
+            )
+            .map(
+                bone => ({
+                    name:
+                        bone.name,
+
+                    length:
+                        bone.length,
+
+                    role:
+                        bone.role,
+
+                    side:
+                        bone.side
+                })
+            );
+    }
+
+
     resetPose() {
 
-        for (const bone of this.bones.values()) {
+        for (
+            const bone
+            of this.bones.values()
+        ) {
 
-            bone.localAngle = 0;
-            bone.localScale = 1;
+            bone.localAngle =
+                0;
+
+            bone.localScale =
+                1;
         }
 
         this.updateWorldTransforms();
@@ -702,10 +1015,15 @@ export default class Skeleton {
         dt
     ) {
 
-        for (const [
-            name,
-            targetAngle
-        ] of Object.entries(targetAngles)) {
+        for (
+            const [
+                name,
+                targetAngle
+            ]
+            of Object.entries(
+                targetAngles
+            )
+        ) {
 
             const bone =
                 this.getBone(name);
@@ -730,44 +1048,150 @@ export default class Skeleton {
     validate() {
 
         if (!this.root) {
+
             return {
                 valid: false,
-                error: "Skeleton has no root"
+                error:
+                    "Skeleton has no root"
             };
         }
 
 
-        for (const bone of this.bones.values()) {
+        if (this.bones.size !== 29) {
+
+            return {
+                valid: false,
+
+                error:
+                    `Expected 29 bones, got ${this.bones.size}`,
+
+                boneCount:
+                    this.bones.size
+            };
+        }
+
+
+        for (
+            const bone
+            of this.bones.values()
+        ) {
 
             const values = [
                 bone.localX,
                 bone.localY,
                 bone.localAngle,
+                bone.localScale,
                 bone.worldX,
                 bone.worldY,
                 bone.worldAngle,
-                bone.worldScale
+                bone.worldScale,
+                bone.length
             ];
+
 
             if (
                 values.some(
                     value =>
-                        !Number.isFinite(value)
+                        !Number.isFinite(
+                            value
+                        )
                 )
             ) {
 
                 return {
                     valid: false,
+
                     error:
                         `Invalid transform in bone "${bone.name}"`
                 };
+            }
+
+
+            if (
+                bone.length < 0
+            ) {
+
+                return {
+                    valid: false,
+
+                    error:
+                        `Negative length in bone "${bone.name}"`
+                };
+            }
+
+
+            /*
+             * Only continuous anatomical chains are checked here.
+             *
+             * Branches such as:
+             * - clavicles
+             * - eyes
+             *
+             * are allowed to originate from anatomical regions
+             * without being forced to equal the parent's segment
+             * length.
+             *
+             * This keeps validation anatomical rather than purely
+             * geometric.
+             */
+
+            if (
+                bone.role === "eye"
+            ) {
+                continue;
+            }
+
+
+            if (
+                bone.parent &&
+                bone.role !== "clavicle" &&
+                bone.parent.role !== "clavicle" &&
+                bone.parent.role !== "chest"
+            ) {
+
+                const distance =
+                    Math.hypot(
+                        bone.localX,
+                        bone.localY
+                    );
+
+                const expected =
+                    bone.parent.length;
+
+
+                /*
+                 * Zero-length parent joints such as wrists are
+                 * deliberate anatomical markers.
+                 */
+
+                if (
+                    expected > 0 &&
+                    Math.abs(
+                        distance -
+                        expected
+                    ) > 0.001
+                ) {
+
+                    return {
+                        valid: false,
+
+                        error:
+                            `Joint distance mismatch at "${bone.name}"`,
+
+                        expected,
+
+                        actual:
+                            distance
+                    };
+                }
             }
         }
 
 
         return {
             valid: true,
-            boneCount: this.bones.size
+            boneCount:
+                this.bones.size
         };
     }
 
@@ -776,13 +1200,24 @@ export default class Skeleton {
 
         const result = {};
 
-        for (const bone of this.bones.values()) {
+        for (
+            const bone
+            of this.bones.values()
+        ) {
 
             result[bone.name] = {
-                x: bone.worldX,
-                y: bone.worldY,
-                angle: bone.worldAngle,
-                scale: bone.worldScale
+
+                x:
+                    bone.worldX,
+
+                y:
+                    bone.worldY,
+
+                angle:
+                    bone.worldAngle,
+
+                scale:
+                    bone.worldScale
             };
         }
 
@@ -791,4 +1226,6 @@ export default class Skeleton {
 }
 
 
-export { Bone };
+export {
+    Bone
+};
