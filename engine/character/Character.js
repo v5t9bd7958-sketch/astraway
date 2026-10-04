@@ -739,12 +739,101 @@ export class Character {
 
 
         // -------------------------------------------------
-        // BODY STATE
+        // BODY STATE — CONTACTS
+        // -------------------------------------------------
+
+        /*
+         * Gait reports which feet are actually planted.
+         *
+         * BodyState must know this before it recomputes
+         * COM / balance, otherwise balance is never
+         * supported and FullBodyController never receives
+         * a real weight / stability signal.
+         *
+         * Order:
+         *
+         * setFootContact
+         *   -> marks contact + updates contact point
+         *
+         * setFootPlanted
+         *   -> marks planted (requires contact)
+         *
+         * setFootWeight
+         *   -> distributes weight between feet
+         */
+
+        const leftPlanted =
+            gaitResult.leftPlanted === true;
+
+        const rightPlanted =
+            gaitResult.rightPlanted === true;
+
+
+        this.bodyState.setFootContact(
+            "left",
+            leftPlanted,
+            gaitResult.left
+        );
+
+        this.bodyState.setFootPlanted(
+            "left",
+            leftPlanted
+        );
+
+
+        this.bodyState.setFootContact(
+            "right",
+            rightPlanted,
+            gaitResult.right
+        );
+
+        this.bodyState.setFootPlanted(
+            "right",
+            rightPlanted
+        );
+
+
+        let leftWeight =
+            0;
+
+        let rightWeight =
+            0;
+
+
+        if (
+            leftPlanted &&
+            rightPlanted
+        ) {
+
+            leftWeight = 0.5;
+            rightWeight = 0.5;
+
+        } else if (leftPlanted) {
+
+            leftWeight = 1;
+            rightWeight = 0;
+
+        } else if (rightPlanted) {
+
+            leftWeight = 0;
+            rightWeight = 1;
+        }
+
+
+        this.bodyState.setFootWeight(
+            leftWeight,
+            rightWeight
+        );
+
+
+        // -------------------------------------------------
+        // BODY STATE — DERIVED
         // -------------------------------------------------
 
         /*
          * BodyState computes COM / balance from the
-         * current Skeleton world transforms.
+         * current Skeleton world transforms and the
+         * contact / weight state above.
          */
 
         this.bodyState.update();
