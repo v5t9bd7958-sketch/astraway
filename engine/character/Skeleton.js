@@ -73,7 +73,8 @@ class Bone {
         parent = null,
         length = 0,
         role = "joint",
-        side = "center"
+        side = "center",
+        mass = 0
     ) {
 
         this.name = name;
@@ -91,6 +92,14 @@ class Bone {
 
         this.role = role;
         this.side = side;
+
+        this.mass =
+            Math.max(
+                0,
+                Number.isFinite(mass)
+                    ? mass
+                    : 0
+            );
 
         // -------------------------------------------------
         // REST POSE
@@ -301,7 +310,8 @@ export default class Skeleton {
         length = 0,
         role = "joint",
         side = "center",
-        restAngle = 0
+        restAngle = 0,
+        mass = 0
     ) {
 
         const parent =
@@ -326,7 +336,8 @@ export default class Skeleton {
                 parent,
                 length,
                 role,
-                side
+                side,
+                mass
             );
 
 
@@ -412,7 +423,8 @@ export default class Skeleton {
             0,
             "pelvis",
             "center",
-            0
+            0,
+            12
         );
 
 
@@ -434,7 +446,8 @@ export default class Skeleton {
             12,
             "spine",
             "center",
-            -Math.PI / 2
+            -Math.PI / 2,
+            6
         );
 
 
@@ -446,7 +459,8 @@ export default class Skeleton {
             12,
             "spine",
             "center",
-            0
+            0,
+            6
         );
 
 
@@ -458,7 +472,8 @@ export default class Skeleton {
             11,
             "spine",
             "center",
-            0
+            0,
+            6
         );
 
 
@@ -470,7 +485,8 @@ export default class Skeleton {
             12,
             "chest",
             "center",
-            0
+            0,
+            8
         );
 
 
@@ -482,7 +498,8 @@ export default class Skeleton {
             10,
             "neck",
             "center",
-            0
+            0,
+            2
         );
 
 
@@ -494,7 +511,8 @@ export default class Skeleton {
             18,
             "head",
             "center",
-            0
+            0,
+            6
         );
 
 
@@ -514,6 +532,7 @@ export default class Skeleton {
             0,
             "eye",
             "left",
+            0,
             0
         );
 
@@ -526,6 +545,7 @@ export default class Skeleton {
             0,
             "eye",
             "right",
+            0,
             0
         );
 
@@ -561,7 +581,8 @@ export default class Skeleton {
             9,
             "clavicle",
             "left",
-            -Math.PI / 2
+            -Math.PI / 2,
+            1
         );
 
 
@@ -573,7 +594,8 @@ export default class Skeleton {
             24,
             "upperArm",
             "left",
-            0
+            0,
+            3
         );
 
 
@@ -585,7 +607,8 @@ export default class Skeleton {
             22,
             "forearm",
             "left",
-            0
+            0,
+            2
         );
 
 
@@ -597,6 +620,7 @@ export default class Skeleton {
             0,
             "wrist",
             "left",
+            0,
             0
         );
 
@@ -609,7 +633,8 @@ export default class Skeleton {
             9,
             "hand",
             "left",
-            0
+            0,
+            1
         );
 
 
@@ -625,7 +650,8 @@ export default class Skeleton {
             9,
             "clavicle",
             "right",
-            Math.PI / 2
+            Math.PI / 2,
+            1
         );
 
 
@@ -637,7 +663,8 @@ export default class Skeleton {
             24,
             "upperArm",
             "right",
-            0
+            0,
+            3
         );
 
 
@@ -649,7 +676,8 @@ export default class Skeleton {
             22,
             "forearm",
             "right",
-            0
+            0,
+            2
         );
 
 
@@ -661,6 +689,7 @@ export default class Skeleton {
             0,
             "wrist",
             "right",
+            0,
             0
         );
 
@@ -673,7 +702,8 @@ export default class Skeleton {
             9,
             "hand",
             "right",
-            0
+            0,
+            1
         );
 
 
@@ -705,7 +735,8 @@ export default class Skeleton {
             34,
             "thigh",
             "left",
-            Math.PI / 2
+            Math.PI / 2,
+            8
         );
 
 
@@ -717,7 +748,8 @@ export default class Skeleton {
             32,
             "shin",
             "left",
-            0
+            0,
+            5
         );
 
 
@@ -729,6 +761,7 @@ export default class Skeleton {
             5,
             "ankle",
             "left",
+            0,
             0
         );
 
@@ -741,7 +774,8 @@ export default class Skeleton {
             13,
             "foot",
             "left",
-            -Math.PI / 2
+            -Math.PI / 2,
+            2
         );
 
 
@@ -753,6 +787,7 @@ export default class Skeleton {
             5,
             "toe",
             "left",
+            0,
             0
         );
 
@@ -769,7 +804,8 @@ export default class Skeleton {
             34,
             "thigh",
             "right",
-            Math.PI / 2
+            Math.PI / 2,
+            8
         );
 
 
@@ -781,7 +817,8 @@ export default class Skeleton {
             32,
             "shin",
             "right",
-            0
+            0,
+            5
         );
 
 
@@ -793,6 +830,7 @@ export default class Skeleton {
             5,
             "ankle",
             "right",
+            0,
             0
         );
 
@@ -805,7 +843,8 @@ export default class Skeleton {
             13,
             "foot",
             "right",
-            -Math.PI / 2
+            -Math.PI / 2,
+            2
         );
 
 
@@ -817,6 +856,7 @@ export default class Skeleton {
             5,
             "toe",
             "right",
+            0,
             0
         );
     }
@@ -832,6 +872,15 @@ export default class Skeleton {
             this.bones.get(name) ||
             null
         );
+    }
+
+
+    getBoneMass(name) {
+        const bone =
+            this.getBone(name);
+        return bone
+            ? bone.mass
+            : 0;
     }
 
 
@@ -1451,6 +1500,18 @@ export default class Skeleton {
 
                     error:
                         `Negative bone length in "${bone.name}"`
+                };
+            }
+
+
+            if (
+                !Number.isFinite(bone.mass) ||
+                bone.mass < 0
+            ) {
+                return {
+                    valid: false,
+                    error:
+                        `Invalid mass in "${bone.name}"`
                 };
             }
 
