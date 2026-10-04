@@ -4,22 +4,27 @@
 // Architecture:
 //
 // Character
-// ├─ Skeleton  = anatomy / hierarchy / rest pose
-// ├─ Gait      = locomotion / foot targets
-// ├─ IK        = mathematical leg solving
-// └─ Animation = state machine
+// ├─ Skeleton            = anatomy / hierarchy / rest pose
+// ├─ Gait                = locomotion / foot targets
+// ├─ BodyState           = COM / contacts / balance
+// ├─ FullBodyController  = upper-body procedural pose
+// ├─ IK                  = mathematical leg solving
+// └─ Animation           = state machine
 //
 // Character owns:
 // - movement
 // - facing
 // - look
-// - pose orchestration
-// - IK integration
+// - root position / root angle
+// - pose orchestration order
+// - leg IK integration
+// - final FK
 //
 // Character does NOT own:
 // - anatomical hierarchy
 // - bone lengths
-// - FK mathematics
+// - upper-body procedural offsets (FullBodyController)
+// - COM / balance math (BodyState)
 // - rendering
 
 
@@ -31,6 +36,10 @@ import {
 
 import Gait from "./Gait.js";
 
+import BodyState from "./BodyState.js";
+
+import FullBodyController from "./FullBodyController.js";
+
 import AnimationStateMachine, {
     ANIMATION_STATES
 } from "./AnimationStateMachine.js";
@@ -38,8 +47,7 @@ import AnimationStateMachine, {
 import {
     dampAngle,
     finite,
-    normalize,
-    shortestAngleDelta
+    normalize
 } from "./MathUtils.js";
 
 
@@ -172,6 +180,43 @@ export class Character {
         );
 
 
+        /*
+         * BodyState owns:
+         * - total mass
+         * - center of mass
+         * - contacts
+         * - support
+         * - balance
+         */
+
+        this.bodyState =
+            new BodyState(
+                this.skeleton
+            );
+
+
+        /*
+         * FullBodyController owns:
+         * - torso
+         * - arms
+         * - neck
+         * - head
+         *
+         * Gait is provided as read-only locomotion
+         * state for procedural arm motion.
+         */
+
+        this.fullBody =
+            new FullBodyController(
+                this.skeleton,
+                this.bodyState,
+                {
+                    gait:
+                        this.gait
+                }
+            );
+
+
         this.animation =
             new AnimationStateMachine();
 
@@ -282,11 +327,27 @@ export class Character {
 
 
         /*
-         * Establish anatomical rest pose
-         * plus current look pose.
+         * Root placement only.
+         * Upper body is owned by FBC.
          */
 
         this.updateSkeletonBase();
+
+
+        /*
+         * FK is required here because Gait initializes
+         * from the actual ankle world positions.
+         */
+
+        this.skeleton.updateWorldTransforms();
+
+
+        /*
+         * Start procedural systems from a clean state.
+         */
+
+        this.fullBody.reset();
+        this.bodyState.reset();
 
 
         /*
@@ -310,9 +371,6 @@ export class Character {
             );
 
         } else {
-
-            this.skeleton.updateWorldTransforms();
-
 
             this.gait.initialize(
                 this.position,
@@ -517,7 +575,19 @@ export class Character {
         );
 
 
+        /*
+         * Root only.
+         */
+
         this.updateSkeletonBase();
+
+
+        /*
+         * Gait initialization needs valid world
+         * ankle positions after moving the root.
+         */
+
+        this.skeleton.updateWorldTransforms();
 
 
         this.gait.initialize(
@@ -583,6 +653,10 @@ export class Character {
             this.position.y;
 
 
+        // -------------------------------------------------
+        // MOVEMENT
+        // -------------------------------------------------
+
         this.updateMovement(
             safeDt
         );
@@ -608,6 +682,10 @@ export class Character {
             frameDistance;
 
 
+        // -------------------------------------------------
+        // FACING / LOOK
+        // -------------------------------------------------
+
         this.updateDirection(
             safeDt,
             dx,
@@ -620,15 +698,37 @@ export class Character {
         );
 
 
+        // -------------------------------------------------
+        // ROOT
+        // -------------------------------------------------
+
         /*
-         * Anatomical base pose.
+         * Character owns only root placement.
+         *
+         * FBC owns upper body.
+         * Gait + IK own legs.
          */
 
         this.updateSkeletonBase();
 
 
         /*
-         * Gait creates foot targets.
+         * Root has changed.
+         *
+         * Update world transforms before systems that
+         * read world-space skeleton data.
+         */
+
+        this.skeleton.updateWorldTransforms();
+
+
+        // -------------------------------------------------
+        // GAIT
+        // -------------------------------------------------
+
+        /*
+         * Gait creates / updates foot targets and
+         * step state.
          */
 
         const gaitResult =
@@ -638,14 +738,81 @@ export class Character {
             );
 
 
+        // -------------------------------------------------
+        // BODY STATE
+        // -------------------------------------------------
+
         /*
-         * IK modifies only joint angles.
+         * BodyState computes COM / balance from the
+         * current Skeleton world transforms.
+         */
+
+        this.bodyState.update();
+
+
+        // -------------------------------------------------
+        // FULL BODY
+        // -------------------------------------------------
+
+        const instantSpeed =
+            Math.hypot(
+                this.velocity.x,
+                this.velocity.y
+            );
+
+
+        this.fullBody.update(
+            safeDt,
+            {
+                speed:
+                    instantSpeed,
+
+                isMoving:
+                    this.isMoving,
+
+                moveAngle:
+                    this.moveAngle,
+
+                lookAngle:
+                    this.lookAngle
+            }
+        );
+
+
+        /*
+         * FBC has now changed upper-body local angles.
+         *
+         * Update world transforms so IK receives
+         * the current complete pre-IK pose.
+         */
+
+        this.skeleton.updateWorldTransforms();
+
+
+        // -------------------------------------------------
+        // LEG IK
+        // -------------------------------------------------
+
+        /*
+         * IK modifies only leg joint angles.
+         *
+         * Skeleton.setWorldBoneAngle() currently performs
+         * its own FK internally. This is intentional for
+         * compatibility with the existing Skeleton API.
          */
 
         this.applyLegIK(
             gaitResult
         );
 
+
+        // -------------------------------------------------
+        // FINAL FK
+        // -------------------------------------------------
+
+        /*
+         * Final authoritative world pose for the frame.
+         */
 
         this.skeleton.updateWorldTransforms();
     }
@@ -1111,6 +1278,19 @@ export class Character {
 
     updateSkeletonBase() {
 
+        /*
+         * Root placement only.
+         *
+         * Upper body:
+         * FullBodyController
+         *
+         * Legs:
+         * Gait + IK
+         *
+         * FK:
+         * Skeleton
+         */
+
         this.skeleton.setRootPosition(
             this.position.x,
             this.position.y
@@ -1120,104 +1300,6 @@ export class Character {
         this.skeleton.setRootAngle(
             this.moveAngle
         );
-
-
-        const lookOffset =
-            shortestAngleDelta(
-                this.moveAngle,
-                this.lookAngle
-            );
-
-
-        /*
-         * IMPORTANT:
-         *
-         * Never replace anatomical rest angles
-         * with look angles.
-         *
-         * Look is an OFFSET on top of the rest pose.
-         */
-
-        const spineLower =
-            this.skeleton.getBone(
-                "spineLower"
-            );
-
-        const spineMid =
-            this.skeleton.getBone(
-                "spineMid"
-            );
-
-        const spineUpper =
-            this.skeleton.getBone(
-                "spineUpper"
-            );
-
-        const chest =
-            this.skeleton.getBone(
-                "chest"
-            );
-
-        const neck =
-            this.skeleton.getBone(
-                "neck"
-            );
-
-        const head =
-            this.skeleton.getBone(
-                "head"
-            );
-
-
-        if (spineLower) {
-
-            spineLower.localAngle =
-                spineLower.restAngle +
-                lookOffset * 0.08;
-        }
-
-
-        if (spineMid) {
-
-            spineMid.localAngle =
-                spineMid.restAngle +
-                lookOffset * 0.10;
-        }
-
-
-        if (spineUpper) {
-
-            spineUpper.localAngle =
-                spineUpper.restAngle +
-                lookOffset * 0.12;
-        }
-
-
-        if (chest) {
-
-            chest.localAngle =
-                chest.restAngle +
-                lookOffset * 0.15;
-        }
-
-
-        if (neck) {
-
-            neck.localAngle =
-                neck.restAngle +
-                lookOffset * 0.20;
-        }
-
-
-        if (head) {
-
-            head.localAngle =
-                head.restAngle +
-                lookOffset * 0.35;
-        }
-
-
-        this.skeleton.updateWorldTransforms();
     }
 
 
@@ -1392,7 +1474,8 @@ export class Character {
 
 
         /*
-         * Hip is the actual thigh origin.
+         * Hip is the actual thigh origin
+         * from the current world pose.
          */
 
         const hipPosition = {
@@ -1427,11 +1510,9 @@ export class Character {
         /*
          * IK changes only orientations.
          *
-         * It never teleports the ankle.
-         *
-         * FK then reconstructs:
-         *
-         * hip → knee → ankle → foot → toe
+         * Skeleton.setWorldBoneAngle() converts the
+         * world angle into local space and immediately
+         * refreshes world transforms.
          */
 
         this.skeleton.setWorldBoneAngle(
@@ -1453,8 +1534,8 @@ export class Character {
         /*
          * Foot stays physically attached to ankle.
          *
-         * It receives a local orientation relative to
-         * the shin, but its position is never moved.
+         * It receives its anatomical rest orientation.
+         * Its position is never teleported.
          */
 
         const footName =
@@ -1471,15 +1552,18 @@ export class Character {
 
         if (foot) {
 
-            /*
-             * Preserve anatomical foot direction
-             * instead of forcing it to world zero.
-             */
-
             foot.localAngle =
                 foot.restAngle;
         }
 
+
+        /*
+         * Keep current Skeleton behaviour.
+         *
+         * setWorldBoneAngle() already performs FK,
+         * and this explicit pass preserves the existing
+         * Character / IK behaviour.
+         */
 
         this.skeleton.updateWorldTransforms();
     }
@@ -1606,6 +1690,16 @@ export class Character {
         this.gait.reset();
 
         this.animation.reset();
+
+
+        /*
+         * Reset procedural state before restoring
+         * anatomical rest pose.
+         */
+
+        this.bodyState.reset();
+
+        this.fullBody.reset();
 
 
         /*
