@@ -463,7 +463,13 @@ export class Gait {
                 this.legs.left.stepping,
 
             rightStepping:
-                this.legs.right.stepping
+                this.legs.right.stepping,
+
+            leftPlanted:
+                this.legs.left.planted,
+
+            rightPlanted:
+                this.legs.right.planted
         };
     }
 
