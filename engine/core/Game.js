@@ -7,23 +7,38 @@ export class Game {
 
     constructor(options = {}) {
 
-        this.canvas = options.canvas ?? null;
+        this.canvas =
+            options.canvas ?? null;
 
         if (!this.canvas) {
-            throw new Error('ASTRAWAY: canvas не передан в Game.');
+            throw new Error(
+                'ASTRAWAY: canvas не передан в Game.'
+            );
         }
 
 
-        this.world = options.world ?? new World();
-
-        this.camera = options.camera ?? new Camera({
-            followSpeed: 7,
-            zoom: 1
-        });
+        this.world =
+            options.world ??
+            new World();
 
 
-        this.renderer = options.renderer ?? new Renderer(
-            this.canvas
+        this.camera =
+            options.camera ??
+            new Camera({
+                followSpeed: 7,
+                zoom: 1
+            });
+
+
+        this.renderer =
+            options.renderer ??
+            new Renderer(
+                this.canvas
+            );
+
+
+        this.renderer.setCamera(
+            this.camera
         );
 
 
@@ -40,8 +55,17 @@ export class Game {
         this.onStop = null;
         this.onUpdate = null;
 
-        this.handleResize = this.handleResize.bind(this);
-        this.loop = this.loop.bind(this);
+
+        this.handleResize =
+            this.handleResize.bind(
+                this
+            );
+
+        this.loop =
+            this.loop.bind(
+                this
+            );
+
 
         window.addEventListener(
             'resize',
@@ -50,6 +74,10 @@ export class Game {
         );
     }
 
+
+    // =====================================================
+    // INITIALIZE
+    // =====================================================
 
     initialize() {
 
@@ -61,6 +89,11 @@ export class Game {
         this.world.initialize();
 
 
+        this.renderer.setWorld(
+            this.world
+        );
+
+
         this.renderer.resize();
 
 
@@ -70,16 +103,9 @@ export class Game {
         );
 
 
-        this.camera.setWorldBounds({
-            minX: 0,
-            minY: 0,
-            maxX: this.world.width,
-            maxY: this.world.height
-        });
-
-
         const startTarget =
             this.world.getCameraTarget();
+
 
         this.camera.setPosition(
             startTarget.x,
@@ -87,20 +113,37 @@ export class Game {
         );
 
 
-        this.renderer.loadBackground()
-            .catch(() => {
-                // Отсутствие изображения не должно ломать игровой цикл.
-            });
+        /*
+         * НИКАКОГО:
+         *
+         * background
+         * navigation
+         * route image
+         * tree image
+         * character image
+         *
+         * здесь больше нет.
+         */
 
 
         this.started = true;
 
 
-        if (typeof this.onReady === 'function') {
-            this.onReady(this);
+        if (
+            typeof this.onReady ===
+            'function'
+        ) {
+
+            this.onReady(
+                this
+            );
         }
     }
 
+
+    // =====================================================
+    // START
+    // =====================================================
 
     start() {
 
@@ -116,19 +159,35 @@ export class Game {
 
         this.world.start();
 
+
         this.running = true;
 
-        this.lastTime = performance.now();
+
+        this.lastTime =
+            performance.now();
+
 
         this.animationFrame =
-            requestAnimationFrame(this.loop);
+            requestAnimationFrame(
+                this.loop
+            );
 
 
-        if (typeof this.onStart === 'function') {
-            this.onStart(this);
+        if (
+            typeof this.onStart ===
+            'function'
+        ) {
+
+            this.onStart(
+                this
+            );
         }
     }
 
+
+    // =====================================================
+    // STOP
+    // =====================================================
 
     stop() {
 
@@ -140,38 +199,62 @@ export class Game {
         this.running = false;
 
 
-        if (this.animationFrame !== null) {
+        if (
+            this.animationFrame !==
+            null
+        ) {
 
             cancelAnimationFrame(
                 this.animationFrame
             );
 
-            this.animationFrame = null;
+            this.animationFrame =
+                null;
         }
 
 
         this.world.stop();
 
 
-        if (typeof this.onStop === 'function') {
-            this.onStop(this);
+        if (
+            typeof this.onStop ===
+            'function'
+        ) {
+
+            this.onStop(
+                this
+            );
         }
     }
 
+
+    // =====================================================
+    // RESTART
+    // =====================================================
 
     restart() {
 
         this.stop();
 
-        this.world = new World();
+
+        this.world =
+            new World();
+
 
         this.world.initialize();
 
 
+        this.renderer.setWorld(
+            this.world
+        );
+
+
         this.camera.reset();
+
 
         const restartTarget =
             this.world.getCameraTarget();
+
 
         this.camera.setPosition(
             restartTarget.x,
@@ -181,9 +264,14 @@ export class Game {
 
         this.started = true;
 
+
         this.start();
     }
 
+
+    // =====================================================
+    // LOOP
+    // =====================================================
 
     loop(timestamp) {
 
@@ -193,35 +281,58 @@ export class Game {
 
 
         let dt =
-            (timestamp - this.lastTime) / 1000;
+            (
+                timestamp -
+                this.lastTime
+            ) / 1000;
 
 
-        this.lastTime = timestamp;
+        this.lastTime =
+            timestamp;
 
 
-        if (!Number.isFinite(dt)) {
+        if (
+            !Number.isFinite(dt)
+        ) {
+
             dt = 0;
         }
 
 
-        dt = Math.min(
-            Math.max(dt, 0),
-            this.maxDeltaTime
+        dt =
+            Math.min(
+                Math.max(
+                    dt,
+                    0
+                ),
+                this.maxDeltaTime
+            );
+
+
+        this.update(
+            dt
         );
 
 
-        this.update(dt);
         this.render();
 
 
         this.animationFrame =
-            requestAnimationFrame(this.loop);
+            requestAnimationFrame(
+                this.loop
+            );
     }
 
 
+    // =====================================================
+    // UPDATE
+    // =====================================================
+
     update(dt) {
 
-        this.world.update(dt);
+        this.world.update(
+            dt
+        );
 
 
         const cameraTarget =
@@ -233,14 +344,27 @@ export class Game {
         );
 
 
-        this.camera.update(dt);
+        this.camera.update(
+            dt
+        );
 
 
-        if (typeof this.onUpdate === 'function') {
-            this.onUpdate(dt, this);
+        if (
+            typeof this.onUpdate ===
+            'function'
+        ) {
+
+            this.onUpdate(
+                dt,
+                this
+            );
         }
     }
 
+
+    // =====================================================
+    // RENDER
+    // =====================================================
 
     render() {
 
@@ -250,6 +374,10 @@ export class Game {
         );
     }
 
+
+    // =====================================================
+    // RESIZE
+    // =====================================================
 
     handleResize() {
 
@@ -268,13 +396,26 @@ export class Game {
     }
 
 
-    handleTap(worldPoint) {
+    // =====================================================
+    // INPUT
+    // =====================================================
 
-        return this.world.handleTap(
-            worldPoint
-        );
+    handleTap() {
+
+        /*
+         * Старой навигации больше нет.
+         *
+         * Пока Character Lab не использует
+         * tap-to-path.
+         */
+
+        return false;
     }
 
+
+    // =====================================================
+    // DEBUG
+    // =====================================================
 
     setDebug(enabled) {
 
@@ -289,6 +430,10 @@ export class Game {
         return this.renderer.toggleDebug();
     }
 
+
+    // =====================================================
+    // GETTERS
+    // =====================================================
 
     getWorld() {
 
@@ -308,18 +453,29 @@ export class Game {
     }
 
 
+    // =====================================================
+    // VALIDATION
+    // =====================================================
+
     validate() {
 
-        const worldResult =
+        const result =
             this.world.validate();
 
 
         return {
-            valid: worldResult.valid,
-            errors: worldResult.errors
+            valid:
+                result.valid,
+
+            errors:
+                result.errors
         };
     }
 
+
+    // =====================================================
+    // DESTROY
+    // =====================================================
 
     destroy() {
 
@@ -334,8 +490,10 @@ export class Game {
 
         if (
             this.renderer &&
-            typeof this.renderer.destroy === 'function'
+            typeof this.renderer.destroy ===
+                'function'
         ) {
+
             this.renderer.destroy();
         }
 
