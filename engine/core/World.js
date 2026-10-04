@@ -187,11 +187,13 @@ export class World {
         const position =
             surface.getPoint(t);
         const node =
-            new InteractionNode({
-                id,
-                position,
-                radius: 42,
-                requiredDistance: 34,
+    new InteractionNode(
+        id,
+        {
+            x: position.x,
+            y: position.y,
+            radius: 42,
+            requiredDistance: 34,
                 action: context => {
                     this.handleInteraction(
                         id,
