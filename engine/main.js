@@ -141,7 +141,7 @@ game.onReady = () => {
 
     input.setEnabled(false);
 
-    game.setDebug(true);
+    game.setDebug(false);
 };
 
 
