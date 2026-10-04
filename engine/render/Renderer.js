@@ -3,6 +3,27 @@
  * Renderer.js
  *
  * Canvas 2D renderer.
+ *
+ * Renderer отвечает только за визуализацию.
+ *
+ * Он НЕ отвечает за:
+ * - анатомию;
+ * - движение;
+ * - IK;
+ * - gait;
+ * - gravity;
+ * - баланс;
+ * - animation state.
+ *
+ * Источник истины:
+ *
+ * Skeleton
+ *     ↓
+ * Character / Gait / IK / Dynamics
+ *     ↓
+ * Renderer
+ *     ↓
+ * Canvas
  */
 
 export class Renderer {
@@ -35,6 +56,7 @@ export class Renderer {
 
         this.width = 0;
         this.height = 0;
+
         this.viewportW = 0;
         this.viewportH = 0;
 
@@ -46,6 +68,11 @@ export class Renderer {
         this.backgroundPath =
             'assets/background.jpg%20.jpeg';
 
+        /*
+         * Debug layer (отладочный слой).
+         *
+         * По умолчанию выключен.
+         */
         this.debug = false;
 
         this._resizeHandler = () => {
@@ -59,6 +86,12 @@ export class Renderer {
 
         this.resize();
     }
+
+    /*
+     * =========================================================
+     * VIEWPORT
+     * =========================================================
+     */
 
     resize() {
         const rect =
@@ -126,6 +159,12 @@ export class Renderer {
         }
     }
 
+    /*
+     * =========================================================
+     * BACKGROUND
+     * =========================================================
+     */
+
     loadBackground(
         path = this.backgroundPath
     ) {
@@ -168,8 +207,15 @@ export class Renderer {
         );
     }
 
+    /*
+     * =========================================================
+     * DEBUG
+     * =========================================================
+     */
+
     setDebug(enabled) {
-        this.debug = Boolean(enabled);
+        this.debug =
+            Boolean(enabled);
 
         if (this.gameState) {
             this.gameState.debugMode =
@@ -180,7 +226,9 @@ export class Renderer {
     }
 
     toggleDebug() {
-        this.setDebug(!this.debug);
+        this.setDebug(
+            !this.debug
+        );
 
         return this.debug;
     }
@@ -188,6 +236,12 @@ export class Renderer {
     isDebugEnabled() {
         return this.debug;
     }
+
+    /*
+     * =========================================================
+     * CLEAR
+     * =========================================================
+     */
 
     clear() {
         const ctx = this.ctx;
@@ -209,6 +263,12 @@ export class Renderer {
         );
     }
 
+    /*
+     * =========================================================
+     * MAIN RENDER
+     * =========================================================
+     */
+
     render(
         world = null,
         camera = null
@@ -221,6 +281,12 @@ export class Renderer {
             this.camera = camera;
         }
 
+        /*
+         * Character берётся из World.
+         *
+         * Renderer не создаёт персонажа
+         * и не хранит отдельную копию.
+         */
         if (
             this.world &&
             typeof this.world.getCharacter ===
@@ -239,18 +305,30 @@ export class Renderer {
 
         this._renderBackground();
 
+        /*
+         * Debug-only geometry.
+         */
         if (this.isDebugEnabled()) {
             this._renderSurfaces();
             this._renderNavigation();
             this._renderWorldBounds();
         }
 
+        /*
+         * Character всегда поверх мира.
+         */
         this._renderCharacter();
 
         if (this.isDebugEnabled()) {
             this._renderDebugGrid();
         }
     }
+
+    /*
+     * =========================================================
+     * FALLBACK
+     * =========================================================
+     */
 
     _renderFallback() {
         const ctx = this.ctx;
@@ -268,6 +346,12 @@ export class Renderer {
 
         ctx.restore();
     }
+
+    /*
+     * =========================================================
+     * BACKGROUND
+     * =========================================================
+     */
 
     _renderBackground() {
         const ctx = this.ctx;
@@ -289,17 +373,22 @@ export class Renderer {
             return;
         }
 
-        const world = this.world;
+        const world =
+            this.world;
 
         const worldWidth =
             world &&
-            Number.isFinite(world.width)
+            Number.isFinite(
+                world.width
+            )
                 ? world.width
                 : this.camera.worldWidth;
 
         const worldHeight =
             world &&
-            Number.isFinite(world.height)
+            Number.isFinite(
+                world.height
+            )
                 ? world.height
                 : this.camera.worldHeight;
 
@@ -338,6 +427,12 @@ export class Renderer {
 
         ctx.restore();
     }
+
+    /*
+     * =========================================================
+     * DEBUG SURFACES
+     * =========================================================
+     */
 
     _renderSurfaces() {
         if (
@@ -404,6 +499,12 @@ export class Renderer {
 
         ctx.restore();
     }
+
+    /*
+     * =========================================================
+     * DEBUG NAVIGATION
+     * =========================================================
+     */
 
     _renderNavigation() {
         if (
@@ -525,13 +626,31 @@ export class Renderer {
         ctx.restore();
     }
 
+    /*
+     * =========================================================
+     * CHARACTER
+     * =========================================================
+     *
+     * Renderer НЕ знает анатомию.
+     *
+     * Он работает с Bone API:
+     *
+     * worldX
+     * worldY
+     * worldAngle
+     * worldScale
+     * length
+     *
+     * Поэтому изменение Skeleton не требует
+     * переписывать Renderer.
+     */
+
     _renderCharacter() {
         const character =
             this.character;
 
         if (
             !character ||
-            !character.position ||
             !character.skeleton ||
             !this.camera
         ) {
@@ -541,8 +660,6 @@ export class Renderer {
         const skeleton =
             character.skeleton;
 
-        const ctx = this.ctx;
-
         if (
             !skeleton.bones ||
             typeof skeleton.bones.values !==
@@ -550,6 +667,14 @@ export class Renderer {
         ) {
             return;
         }
+
+        const ctx = this.ctx;
+
+        /*
+         * -----------------------------------------------------
+         * Bone lookup
+         * -----------------------------------------------------
+         */
 
         const getBone =
             name => {
@@ -564,6 +689,12 @@ export class Renderer {
                     name
                 );
             };
+
+        /*
+         * -----------------------------------------------------
+         * World → screen
+         * -----------------------------------------------------
+         */
 
         const getScreenPoint =
             bone => {
@@ -588,46 +719,99 @@ export class Renderer {
                 );
             };
 
-        const drawSegment =
+        /*
+         * -----------------------------------------------------
+         * Draw one anatomical bone.
+         *
+         * ВАЖНО:
+         *
+         * Не используем следующую кость
+         * для определения длины.
+         *
+         * Собственная длина кости:
+         *
+         * bone.length
+         *
+         * Собственный мировой угол:
+         *
+         * bone.worldAngle
+         *
+         * Это делает Renderer независимым
+         * от конкретной иерархии.
+         * -----------------------------------------------------
+         */
+
+        const drawBone =
             (
-                parentName,
-                childName,
+                name,
                 width,
                 alpha = 1
             ) => {
-                const parent =
-                    getBone(
-                        parentName
-                    );
+                const bone =
+                    getBone(name);
 
-                const child =
-                    getBone(
-                        childName
-                    );
+                if (!bone) {
+                    return;
+                }
 
                 if (
-                    !parent ||
-                    !child
+                    !Number.isFinite(
+                        bone.worldX
+                    ) ||
+                    !Number.isFinite(
+                        bone.worldY
+                    ) ||
+                    !Number.isFinite(
+                        bone.worldAngle
+                    ) ||
+                    !Number.isFinite(
+                        bone.length
+                    )
                 ) {
                     return;
                 }
 
-                const a =
-                    getScreenPoint(
-                        parent
+                const start =
+                    this.camera.worldToScreen(
+                        bone.worldX,
+                        bone.worldY
                     );
 
-                const b =
-                    getScreenPoint(
-                        child
+                const scale =
+                    Number.isFinite(
+                        bone.worldScale
+                    )
+                        ? Math.abs(
+                            bone.worldScale
+                        )
+                        : 1;
+
+                const worldLength =
+                    Math.max(
+                        0,
+                        bone.length *
+                        scale
                     );
 
-                if (
-                    !a ||
-                    !b
-                ) {
-                    return;
-                }
+                const endWorldX =
+                    bone.worldX +
+                    Math.cos(
+                        bone.worldAngle
+                    ) *
+                    worldLength;
+
+                const endWorldY =
+                    bone.worldY +
+                    Math.sin(
+                        bone.worldAngle
+                    ) *
+                    worldLength;
+
+                const end =
+                    this.camera.worldToScreen(
+                        endWorldX,
+                        endWorldY
+                    );
 
                 ctx.save();
 
@@ -649,13 +833,13 @@ export class Renderer {
                 ctx.beginPath();
 
                 ctx.moveTo(
-                    a.x,
-                    a.y
+                    start.x,
+                    start.y
                 );
 
                 ctx.lineTo(
-                    b.x,
-                    b.y
+                    end.x,
+                    end.y
                 );
 
                 ctx.stroke();
@@ -663,18 +847,26 @@ export class Renderer {
                 ctx.restore();
             };
 
+        /*
+         * -----------------------------------------------------
+         * Draw joint marker.
+         * -----------------------------------------------------
+         */
+
         const drawJoint =
             (
                 name,
                 radius
             ) => {
-                const b =
+                const bone =
                     getBone(name);
 
-                const p =
-                    getScreenPoint(b);
+                const point =
+                    getScreenPoint(
+                        bone
+                    );
 
-                if (!p) {
+                if (!point) {
                     return;
                 }
 
@@ -686,8 +878,8 @@ export class Renderer {
                 ctx.beginPath();
 
                 ctx.arc(
-                    p.x,
-                    p.y,
+                    point.x,
+                    point.y,
                     radius,
                     0,
                     Math.PI * 2
@@ -699,137 +891,195 @@ export class Renderer {
             };
 
         /*
-         * Ноги.
-         *
-         * Здесь особенно хорошо
-         * видно работу Gait + IK.
+         * =====================================================
+         * LEGS
+         * =====================================================
          */
 
-        drawSegment(
-            'hipL',
-            'kneeL',
+        drawBone(
+            'thighL',
+            11
+        );
+
+        drawBone(
+            'shinL',
             10
         );
 
-        drawSegment(
-            'kneeL',
+        drawBone(
             'ankleL',
-            9
+            8
         );
 
-        drawSegment(
-            'ankleL',
+        drawBone(
             'footL',
-            8
+            7
         );
 
-        drawSegment(
-            'hipR',
-            'kneeR',
+        drawBone(
+            'toeL',
+            5
+        );
+
+        drawBone(
+            'thighR',
+            11
+        );
+
+        drawBone(
+            'shinR',
             10
         );
 
-        drawSegment(
-            'kneeR',
+        drawBone(
             'ankleR',
-            9
+            8
         );
 
-        drawSegment(
-            'ankleR',
+        drawBone(
             'footR',
-            8
+            7
+        );
+
+        drawBone(
+            'toeR',
+            5
         );
 
         /*
-         * Корпус.
+         * =====================================================
+         * SPINE
+         * =====================================================
          */
 
-        drawSegment(
-            'pelvis',
-            'spine',
+        drawBone(
+            'spineLower',
             15
         );
 
-        drawSegment(
-            'spine',
-            'chest',
+        drawBone(
+            'spineMid',
             16
         );
 
-        drawSegment(
+        drawBone(
+            'spineUpper',
+            17
+        );
+
+        drawBone(
             'chest',
+            18
+        );
+
+        drawBone(
             'neck',
             12
         );
 
         /*
-         * Левая рука.
+         * Head is rendered separately.
+         * Therefore the head segment itself is not used
+         * as a simple line.
          */
 
-        drawSegment(
-            'shoulderL',
-            'elbowL',
+        /*
+         * =====================================================
+         * LEFT ARM
+         * =====================================================
+         */
+
+        drawBone(
+            'clavicleL',
             8
         );
 
-        drawSegment(
-            'elbowL',
+        drawBone(
+            'upperArmL',
+            9
+        );
+
+        drawBone(
+            'forearmL',
+            8
+        );
+
+        drawBone(
             'wristL',
             7
         );
 
-        drawSegment(
-            'wristL',
+        drawBone(
             'handL',
             6
         );
 
         /*
-         * Правая рука.
+         * =====================================================
+         * RIGHT ARM
+         * =====================================================
          */
 
-        drawSegment(
-            'shoulderR',
-            'elbowR',
+        drawBone(
+            'clavicleR',
             8
         );
 
-        drawSegment(
-            'elbowR',
+        drawBone(
+            'upperArmR',
+            9
+        );
+
+        drawBone(
+            'forearmR',
+            8
+        );
+
+        drawBone(
             'wristR',
             7
         );
 
-        drawSegment(
-            'wristR',
+        drawBone(
             'handR',
             6
         );
 
         /*
-         * Суставы.
+         * =====================================================
+         * JOINTS
+         * =====================================================
          */
 
-        [
+        const joints = [
             ['pelvis', 10],
 
-            ['shoulderL', 6],
-            ['elbowL', 5],
+            ['spineLower', 6],
+            ['spineMid', 6],
+            ['spineUpper', 7],
+            ['chest', 9],
+            ['neck', 6],
+
+            ['clavicleL', 5],
+            ['upperArmL', 6],
+            ['forearmL', 5],
             ['wristL', 4],
 
-            ['shoulderR', 6],
-            ['elbowR', 5],
+            ['clavicleR', 5],
+            ['upperArmR', 6],
+            ['forearmR', 5],
             ['wristR', 4],
 
-            ['hipL', 6],
-            ['kneeL', 6],
+            ['thighL', 7],
+            ['shinL', 6],
             ['ankleL', 5],
 
-            ['hipR', 6],
-            ['kneeR', 6],
+            ['thighR', 7],
+            ['shinR', 6],
             ['ankleR', 5]
-        ].forEach(
+        ];
+
+        joints.forEach(
             ([name, radius]) => {
                 drawJoint(
                     name,
@@ -839,100 +1089,107 @@ export class Renderer {
         );
 
         /*
-         * Голова.
+         * =====================================================
+         * HEAD
+         * =====================================================
          */
 
         const head =
             getBone('head');
 
-        const neck =
+        const headPoint =
             getScreenPoint(
-                getBone('neck')
+                head
             );
 
-        if (
-            head &&
-            neck
-        ) {
-            const hp =
-                getScreenPoint(
-                    head
-                );
+        if (headPoint) {
+            const headRadius =
+                head &&
+                Number.isFinite(
+                    head.length
+                )
+                    ? Math.max(
+                        15,
+                        head.length *
+                        (head.worldScale || 1) *
+                        0.42
+                    )
+                    : 18;
 
-            if (hp) {
+            ctx.save();
+
+            ctx.fillStyle =
+                'rgba(28,31,40,0.98)';
+
+            ctx.beginPath();
+
+            ctx.arc(
+                headPoint.x,
+                headPoint.y,
+                headRadius,
+                0,
+                Math.PI * 2
+            );
+
+            ctx.fill();
+
+            ctx.strokeStyle =
+                'rgba(180,190,210,0.65)';
+
+            ctx.lineWidth = 2;
+
+            ctx.stroke();
+
+            ctx.restore();
+        }
+
+        /*
+         * =====================================================
+         * EYES
+         * =====================================================
+         */
+
+        [
+            'eyeL',
+            'eyeR'
+        ].forEach(
+            name => {
+                const eye =
+                    getScreenPoint(
+                        getBone(name)
+                    );
+
+                if (!eye) {
+                    return;
+                }
+
                 ctx.save();
 
                 ctx.fillStyle =
-                    'rgba(28,31,40,0.98)';
+                    'rgba(230,245,255,0.95)';
 
                 ctx.beginPath();
 
                 ctx.arc(
-                    hp.x,
-                    hp.y,
-                    Math.max(
-                        15,
-                        head.length *
-                        head.worldScale *
-                        0.42
-                    ),
+                    eye.x,
+                    eye.y,
+                    3.2,
                     0,
                     Math.PI * 2
                 );
 
                 ctx.fill();
 
-                ctx.strokeStyle =
-                    'rgba(180,190,210,0.65)';
-
-                ctx.lineWidth = 2;
-
-                ctx.stroke();
-
                 ctx.restore();
-
-                /*
-                 * Глаза используют
-                 * реальные eye bones.
-                 */
-
-                [
-                    'eyeL',
-                    'eyeR'
-                ].forEach(
-                    name => {
-                        const eye =
-                            getScreenPoint(
-                                getBone(name)
-                            );
-
-                        if (!eye) {
-                            return;
-                        }
-
-                        ctx.save();
-
-                        ctx.fillStyle =
-                            'rgba(230,245,255,0.95)';
-
-                        ctx.beginPath();
-
-                        ctx.arc(
-                            eye.x,
-                            eye.y,
-                            3.2,
-                            0,
-                            Math.PI * 2
-                        );
-
-                        ctx.fill();
-
-                        ctx.restore();
-                    }
-                );
             }
-        }
+        );
     }
+
+    /*
+     * =========================================================
+     * DEBUG WORLD BOUNDS
+     * =========================================================
+     */
 
     _renderWorldBounds() {
         if (
@@ -987,6 +1244,12 @@ export class Renderer {
         ctx.restore();
     }
 
+    /*
+     * =========================================================
+     * DEBUG GRID
+     * =========================================================
+     */
+
     _renderDebugGrid() {
         if (!this.camera) {
             return;
@@ -1003,12 +1266,17 @@ export class Renderer {
 
         const step = 100;
 
+        const worldWidth =
+            this.world?.width ||
+            2400;
+
+        const worldHeight =
+            this.world?.height ||
+            5190;
+
         for (
             let x = 0;
-            x <= (
-                this.world?.width ||
-                2400
-            );
+            x <= worldWidth;
             x += step
         ) {
             const p1 =
@@ -1020,8 +1288,7 @@ export class Renderer {
             const p2 =
                 this.camera.worldToScreen(
                     x,
-                    this.world?.height ||
-                    5190
+                    worldHeight
                 );
 
             ctx.beginPath();
@@ -1041,10 +1308,7 @@ export class Renderer {
 
         for (
             let y = 0;
-            y <= (
-                this.world?.height ||
-                5190
-            );
+            y <= worldHeight;
             y += step
         ) {
             const p1 =
@@ -1055,8 +1319,7 @@ export class Renderer {
 
             const p2 =
                 this.camera.worldToScreen(
-                    this.world?.width ||
-                    2400,
+                    worldWidth,
                     y
                 );
 
@@ -1077,6 +1340,12 @@ export class Renderer {
 
         ctx.restore();
     }
+
+    /*
+     * =========================================================
+     * DESTROY
+     * =========================================================
+     */
 
     destroy() {
         window.removeEventListener(
