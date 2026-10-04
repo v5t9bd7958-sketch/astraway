@@ -1342,6 +1342,20 @@ export class Character {
          *
          * FK:
          * Skeleton
+         *
+         * NOTE:
+         *
+         * rootAngle is intentionally decoupled from
+         * moveAngle for the current iteration.
+         *
+         * moveAngle remains movement direction along
+         * the surface tangent.
+         *
+         * For flat walking the body stays aligned with
+         * world gravity: rootAngle = 0.
+         *
+         * Slope / climb orientation will be handled
+         * later as a separate architectural step.
          */
 
         this.skeleton.setRootPosition(
@@ -1351,7 +1365,7 @@ export class Character {
 
 
         this.skeleton.setRootAngle(
-            this.moveAngle
+            0
         );
     }
 
