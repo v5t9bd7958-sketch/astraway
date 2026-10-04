@@ -4,19 +4,24 @@
 // Architecture:
 //
 // Character
-// ├─ Skeleton  = anatomy / hierarchy
+// ├─ Skeleton  = anatomy / hierarchy / rest pose
 // ├─ Gait      = locomotion / foot targets
-// ├─ IK        = leg solving
+// ├─ IK        = mathematical leg solving
 // └─ Animation = state machine
 //
-// Anatomical leg:
+// Character owns:
+// - movement
+// - facing
+// - look
+// - pose orchestration
+// - IK integration
 //
-// pelvis
-//   └─ thigh
-//        └─ shin
-//             └─ ankle
-//                  └─ foot
-//                       └─ toe
+// Character does NOT own:
+// - anatomical hierarchy
+// - bone lengths
+// - FK mathematics
+// - rendering
+
 
 import Skeleton from "./Skeleton.js";
 
@@ -43,12 +48,25 @@ export class Character {
     constructor(options = {}) {
 
         this.position = {
-            x: finite(options.x, 0),
-            y: finite(options.y, 0)
+            x:
+                finite(
+                    options.x,
+                    0
+                ),
+
+            y:
+                finite(
+                    options.y,
+                    0
+                )
         };
 
+
         this.moveAngle =
-            finite(options.angle, 0);
+            finite(
+                options.angle,
+                0
+            );
 
         this.lookAngle =
             this.moveAngle;
@@ -59,50 +77,76 @@ export class Character {
         this.targetLookAngle =
             this.lookAngle;
 
+
         this.speed =
             Math.max(
                 1,
-                finite(options.speed, 90)
+                finite(
+                    options.speed,
+                    90
+                )
             );
+
 
         this.turnSpeed =
             Math.max(
                 0.01,
-                finite(options.turnSpeed, 10)
+                finite(
+                    options.turnSpeed,
+                    10
+                )
             );
+
 
         this.lookTurnSpeed =
             Math.max(
                 0.01,
-                finite(options.lookTurnSpeed, 8)
+                finite(
+                    options.lookTurnSpeed,
+                    8
+                )
             );
+
 
         this.velocity = {
             x: 0,
             y: 0
         };
 
-        this.travelledDistance = 0;
 
-        this.isMoving = false;
+        this.travelledDistance =
+            0;
 
-        this.currentSurface = null;
-        this.currentSurfaceT = 0;
+        this.isMoving =
+            false;
+
+
+        this.currentSurface =
+            null;
+
+        this.currentSurfaceT =
+            0;
+
 
         this.path = [];
         this.pathIndex = 0;
 
-        this.lookTarget = null;
 
-        // -------------------------------------------------
+        this.lookTarget =
+            null;
+
+
+        // =================================================
         // CORE SYSTEMS
-        // -------------------------------------------------
+        // =================================================
 
         this.skeleton =
             new Skeleton();
 
+
         this.gait =
             new Gait({
+
                 stepLength:
                     finite(
                         options.stepLength,
@@ -122,17 +166,18 @@ export class Character {
                     )
             });
 
-        /*
-         * Skeleton is the authoritative anatomy.
-         */
+
         this.gait.bindSkeleton(
             this.skeleton
         );
 
+
         this.animation =
             new AnimationStateMachine();
 
+
         this.footTargets = {
+
             left: {
                 x: 0,
                 y: 0
@@ -144,17 +189,29 @@ export class Character {
             }
         };
 
+
+        /*
+         * Pole points are currently kept as stable
+         * anatomical references.
+         *
+         * They will later be derived from the
+         * gravity frame / movement frame.
+         */
+
         this.poleLeft = {
             x: 0,
             y: 0
         };
+
 
         this.poleRight = {
             x: 0,
             y: 0
         };
 
-        this.initialized = false;
+
+        this.initialized =
+            false;
     }
 
 
@@ -183,6 +240,7 @@ export class Character {
                 );
         }
 
+
         this.currentSurface =
             surface;
 
@@ -191,6 +249,7 @@ export class Character {
                 surfaceT,
                 0
             );
+
 
         if (surface) {
 
@@ -206,12 +265,9 @@ export class Character {
                 frame.position.y;
         }
 
+
         /*
-         * FIRST establish the anatomical base pose.
-         *
-         * Gait must read the actual Skeleton ankle
-         * positions, therefore this MUST happen before
-         * gait.initialize().
+         * Root first.
          */
 
         this.skeleton.setRootPosition(
@@ -219,11 +275,23 @@ export class Character {
             this.position.y
         );
 
+
         this.skeleton.setRootAngle(
             this.moveAngle
         );
 
+
+        /*
+         * Establish anatomical rest pose
+         * plus current look pose.
+         */
+
         this.updateSkeletonBase();
+
+
+        /*
+         * Gait must read actual ankle positions.
+         */
 
         if (surface) {
 
@@ -232,6 +300,7 @@ export class Character {
                     this.currentSurfaceT
                 );
 
+
             this.gait.initialize(
                 this.position,
                 frame.tangent,
@@ -239,12 +308,15 @@ export class Character {
                 surface,
                 this.currentSurfaceT
             );
+
         } else {
 
             this.skeleton.updateWorldTransforms();
 
+
             this.gait.initialize(
                 this.position,
+
                 {
                     x:
                         Math.cos(
@@ -256,16 +328,20 @@ export class Character {
                             this.moveAngle
                         )
                 },
+
                 {
                     x: 0,
                     y: -1
                 },
+
                 null,
                 0
             );
         }
 
-        this.initialized = true;
+
+        this.initialized =
+            true;
     }
 
 
@@ -275,7 +351,9 @@ export class Character {
 
     setPath(path) {
 
-        if (!Array.isArray(path)) {
+        if (
+            !Array.isArray(path)
+        ) {
 
             this.path = [];
             this.pathIndex = 0;
@@ -284,40 +362,47 @@ export class Character {
             return;
         }
 
+
         this.path =
             path
                 .filter(Boolean)
-                .map(point => ({
+                .map(
+                    point => ({
 
-                    x:
-                        finite(
-                            point.x,
-                            0
-                        ),
+                        x:
+                            finite(
+                                point.x,
+                                0
+                            ),
 
-                    y:
-                        finite(
-                            point.y,
-                            0
-                        ),
+                        y:
+                            finite(
+                                point.y,
+                                0
+                            ),
 
-                    surface:
-                        point.surface ||
-                        null,
+                        surface:
+                            point.surface ||
+                            null,
 
-                    t:
-                        finite(
-                            point.t,
-                            0
-                        )
-                }));
+                        t:
+                            finite(
+                                point.t,
+                                0
+                            )
+                    })
+                );
+
 
         this.pathIndex = 0;
+
 
         this.isMoving =
             this.path.length > 0;
 
+
         this.animation.setState(
+
             this.isMoving
                 ? ANIMATION_STATES.WALK
                 : ANIMATION_STATES.IDLE
@@ -335,6 +420,7 @@ export class Character {
         this.velocity.x = 0;
         this.velocity.y = 0;
 
+
         this.animation.setState(
             ANIMATION_STATES.IDLE
         );
@@ -349,12 +435,15 @@ export class Character {
 
         if (!target) {
 
-            this.lookTarget = null;
+            this.lookTarget =
+                null;
 
             return;
         }
 
+
         this.lookTarget = {
+
             x:
                 finite(
                     target.x,
@@ -372,7 +461,8 @@ export class Character {
 
     clearLookTarget() {
 
-        this.lookTarget = null;
+        this.lookTarget =
+            null;
 
         this.targetLookAngle =
             this.moveAngle;
@@ -392,16 +482,22 @@ export class Character {
             surface;
 
         this.currentSurfaceT =
-            finite(t, 0);
+            finite(
+                t,
+                0
+            );
+
 
         if (!surface) {
             return;
         }
 
+
         const frame =
             surface.getFrame(
                 this.currentSurfaceT
             );
+
 
         this.position.x =
             frame.position.x;
@@ -409,19 +505,20 @@ export class Character {
         this.position.y =
             frame.position.y;
 
-        /*
-         * Rebuild base skeleton first.
-         */
+
         this.skeleton.setRootPosition(
             this.position.x,
             this.position.y
         );
 
+
         this.skeleton.setRootAngle(
             this.moveAngle
         );
 
+
         this.updateSkeletonBase();
+
 
         this.gait.initialize(
             this.position,
@@ -441,6 +538,7 @@ export class Character {
         ) {
             return;
         }
+
 
         if (
             point.surface !==
@@ -467,13 +565,16 @@ export class Character {
                 finite(dt, 0)
             );
 
+
         if (!this.initialized) {
             return;
         }
 
+
         this.animation.update(
             safeDt
         );
+
 
         const previousX =
             this.position.x;
@@ -481,9 +582,11 @@ export class Character {
         const previousY =
             this.position.y;
 
+
         this.updateMovement(
             safeDt
         );
+
 
         const dx =
             this.position.x -
@@ -493,14 +596,17 @@ export class Character {
             this.position.y -
             previousY;
 
+
         const frameDistance =
             Math.hypot(
                 dx,
                 dy
             );
 
+
         this.travelledDistance +=
             frameDistance;
+
 
         this.updateDirection(
             safeDt,
@@ -508,30 +614,38 @@ export class Character {
             dy
         );
 
+
         this.updateLook(
             safeDt
         );
 
-        /*
-         * Base anatomical pose.
-         */
-        this.updateSkeletonBase();
 
         /*
-         * Locomotion creates foot targets.
+         * Anatomical base pose.
          */
+
+        this.updateSkeletonBase();
+
+
+        /*
+         * Gait creates foot targets.
+         */
+
         const gaitResult =
             this.updateGait(
                 safeDt,
                 frameDistance
             );
 
+
         /*
-         * IK solves only thigh + shin angles.
+         * IK modifies only joint angles.
          */
+
         this.applyLegIK(
             gaitResult
         );
+
 
         this.skeleton.updateWorldTransforms();
     }
@@ -554,6 +668,7 @@ export class Character {
 
             this.isMoving = false;
 
+
             if (
                 !this.animation.is(
                     ANIMATION_STATES.IDLE
@@ -565,16 +680,20 @@ export class Character {
                 );
             }
 
+
             return;
         }
+
 
         const waypoint =
             this.path[
                 this.pathIndex
             ];
 
+
         const stepDistance =
             this.speed * dt;
+
 
         // -------------------------------------------------
         // SAME SURFACE
@@ -589,6 +708,7 @@ export class Character {
             const surface =
                 this.currentSurface;
 
+
             const targetT =
                 Math.max(
                     0,
@@ -597,6 +717,7 @@ export class Character {
                         waypoint.t
                     )
                 );
+
 
             const currentT =
                 Math.max(
@@ -607,22 +728,28 @@ export class Character {
                     )
                 );
 
+
             const currentDistance =
                 surface.tToDistance(
                     currentT
                 );
+
 
             const targetDistance =
                 surface.tToDistance(
                     targetT
                 );
 
+
             const remaining =
                 targetDistance -
                 currentDistance;
 
+
             if (
-                Math.abs(remaining) <=
+                Math.abs(
+                    remaining
+                ) <=
                 Math.max(
                     0.001,
                     stepDistance
@@ -634,6 +761,7 @@ export class Character {
                         targetT
                     );
 
+
                 this.position.x =
                     frame.position.x;
 
@@ -643,45 +771,60 @@ export class Character {
                 this.currentSurfaceT =
                     targetT;
 
+
                 this.velocity.x = 0;
                 this.velocity.y = 0;
 
+
                 this.pathIndex++;
+
 
                 if (
                     this.pathIndex >=
                     this.path.length
                 ) {
+
                     this.clearPath();
                 }
 
+
                 return;
             }
+
 
             const directionT =
                 remaining > 0
                     ? 1
                     : -1;
 
+
             const nextDistance =
                 currentDistance +
                 directionT *
                 stepDistance;
+
 
             const nextT =
                 surface.distanceToT(
                     nextDistance
                 );
 
+
             const frame =
                 surface.getFrame(
                     nextT
                 );
 
+
             const previous = {
-                x: this.position.x,
-                y: this.position.y
+
+                x:
+                    this.position.x,
+
+                y:
+                    this.position.y
             };
+
 
             this.position.x =
                 frame.position.x;
@@ -692,6 +835,7 @@ export class Character {
             this.currentSurfaceT =
                 nextT;
 
+
             const moveDx =
                 this.position.x -
                 previous.x;
@@ -700,15 +844,19 @@ export class Character {
                 this.position.y -
                 previous.y;
 
+
             const actualStep =
                 Math.hypot(
                     moveDx,
                     moveDy
                 );
 
+
             if (
-                actualStep > 0.000001 &&
-                dt > 0.000001
+                actualStep >
+                0.000001 &&
+                dt >
+                0.000001
             ) {
 
                 this.velocity.x =
@@ -730,16 +878,20 @@ export class Character {
                     directionT;
             }
 
+
             this.targetMoveAngle =
                 Math.atan2(
                     frame.tangent.y *
                     directionT,
+
                     frame.tangent.x *
                     directionT
                 );
 
+
             return;
         }
+
 
         // -------------------------------------------------
         // SURFACE TRANSITION
@@ -756,17 +908,22 @@ export class Character {
                 waypoint.t
             );
 
+
             this.pathIndex++;
+
 
             if (
                 this.pathIndex >=
                 this.path.length
             ) {
+
                 this.clearPath();
             }
 
+
             return;
         }
+
 
         // -------------------------------------------------
         // FREE MOVEMENT
@@ -780,11 +937,13 @@ export class Character {
             waypoint.y -
             this.position.y;
 
+
         const d =
             Math.hypot(
                 dx,
                 dy
             );
+
 
         if (
             d <=
@@ -800,31 +959,42 @@ export class Character {
             this.position.y =
                 waypoint.y;
 
+
             this.pathIndex++;
+
 
             if (
                 this.pathIndex >=
                 this.path.length
             ) {
+
                 this.clearPath();
             }
 
+
             return;
         }
+
 
         const direction =
             normalize(
                 dx,
                 dy,
-                Math.cos(this.moveAngle),
-                Math.sin(this.moveAngle)
+                Math.cos(
+                    this.moveAngle
+                ),
+                Math.sin(
+                    this.moveAngle
+                )
             );
+
 
         const step =
             Math.min(
                 stepDistance,
                 d
             );
+
 
         this.velocity.x =
             direction.x *
@@ -834,6 +1004,7 @@ export class Character {
             direction.y *
             this.speed;
 
+
         this.position.x +=
             direction.x *
             step;
@@ -841,6 +1012,7 @@ export class Character {
         this.position.y +=
             direction.y *
             step;
+
 
         this.targetMoveAngle =
             Math.atan2(
@@ -861,8 +1033,10 @@ export class Character {
     ) {
 
         if (
-            Math.abs(dx) > 0.0001 ||
-            Math.abs(dy) > 0.0001
+            Math.abs(dx) >
+            0.0001 ||
+            Math.abs(dy) >
+            0.0001
         ) {
 
             this.targetMoveAngle =
@@ -871,6 +1045,7 @@ export class Character {
                     dx
                 );
         }
+
 
         this.moveAngle =
             dampAngle(
@@ -898,9 +1073,12 @@ export class Character {
                 this.lookTarget.y -
                 this.position.y;
 
+
             if (
-                Math.abs(dx) > 0.001 ||
-                Math.abs(dy) > 0.001
+                Math.abs(dx) >
+                0.001 ||
+                Math.abs(dy) >
+                0.001
             ) {
 
                 this.targetLookAngle =
@@ -915,6 +1093,7 @@ export class Character {
             this.targetLookAngle =
                 this.moveAngle;
         }
+
 
         this.lookAngle =
             dampAngle(
@@ -937,15 +1116,27 @@ export class Character {
             this.position.y
         );
 
+
         this.skeleton.setRootAngle(
             this.moveAngle
         );
+
 
         const lookOffset =
             shortestAngleDelta(
                 this.moveAngle,
                 this.lookAngle
             );
+
+
+        /*
+         * IMPORTANT:
+         *
+         * Never replace anatomical rest angles
+         * with look angles.
+         *
+         * Look is an OFFSET on top of the rest pose.
+         */
 
         const spineLower =
             this.skeleton.getBone(
@@ -977,40 +1168,54 @@ export class Character {
                 "head"
             );
 
-        /*
-         * Look rotation is distributed through
-         * the torso instead of snapping the head.
-         */
 
         if (spineLower) {
+
             spineLower.localAngle =
+                spineLower.restAngle +
                 lookOffset * 0.08;
         }
 
+
         if (spineMid) {
+
             spineMid.localAngle =
+                spineMid.restAngle +
                 lookOffset * 0.10;
         }
 
+
         if (spineUpper) {
+
             spineUpper.localAngle =
+                spineUpper.restAngle +
                 lookOffset * 0.12;
         }
 
+
         if (chest) {
+
             chest.localAngle =
+                chest.restAngle +
                 lookOffset * 0.15;
         }
 
+
         if (neck) {
+
             neck.localAngle =
+                neck.restAngle +
                 lookOffset * 0.20;
         }
 
+
         if (head) {
+
             head.localAngle =
+                head.restAngle +
                 lookOffset * 0.35;
         }
+
 
         this.skeleton.updateWorldTransforms();
     }
@@ -1026,27 +1231,38 @@ export class Character {
     ) {
 
         let tangent = {
+
             x:
                 Math.cos(
                     this.moveAngle
                 ),
+
             y:
                 Math.sin(
                     this.moveAngle
                 )
         };
 
+
         let normal = {
-            x: -tangent.y,
-            y: tangent.x
+
+            x:
+                -tangent.y,
+
+            y:
+                tangent.x
         };
 
-        if (this.currentSurface) {
+
+        if (
+            this.currentSurface
+        ) {
 
             const frame =
                 this.currentSurface.getFrame(
                     this.currentSurfaceT
                 );
+
 
             tangent =
                 frame.tangent;
@@ -1054,6 +1270,7 @@ export class Character {
             normal =
                 frame.normal;
         }
+
 
         const result =
             this.gait.update(
@@ -1067,15 +1284,26 @@ export class Character {
                 this.isMoving
             );
 
+
         this.footTargets.left = {
-            x: result.left.x,
-            y: result.left.y
+
+            x:
+                result.left.x,
+
+            y:
+                result.left.y
         };
 
+
         this.footTargets.right = {
-            x: result.right.x,
-            y: result.right.y
+
+            x:
+                result.right.x,
+
+            y:
+                result.right.y
         };
+
 
         return result;
     }
@@ -1091,19 +1319,27 @@ export class Character {
             return;
         }
 
+
         this.solveLeg(
+
             "thighL",
             "shinL",
             "ankleL",
+
             gaitResult.left,
+
             this.poleLeft
         );
 
+
         this.solveLeg(
+
             "thighR",
             "shinR",
             "ankleR",
+
             gaitResult.right,
+
             this.poleRight
         );
     }
@@ -1132,80 +1368,118 @@ export class Character {
                 ankleName
             );
 
+
         if (
             !thigh ||
             !shin ||
             !ankle
         ) {
+
             return;
         }
+
 
         const upperLength =
             this.skeleton.getAnatomicalLength(
                 thighName
             );
 
+
         const lowerLength =
             this.skeleton.getAnatomicalLength(
                 shinName
             );
 
+
+        /*
+         * Hip is the actual thigh origin.
+         */
+
         const hipPosition = {
-            x: thigh.worldX,
-            y: thigh.worldY
+
+            x:
+                thigh.worldX,
+
+            y:
+                thigh.worldY
         };
+
 
         const result =
             solveTwoBoneIK(
+
                 hipPosition,
+
                 target,
+
                 upperLength,
+
                 lowerLength,
+
                 pole,
+
                 {
                     minReach: 1
                 }
             );
 
+
         /*
-         * IMPORTANT:
+         * IK changes only orientations.
          *
-         * Only angles are changed.
+         * It never teleports the ankle.
          *
-         * We intentionally DO NOT call:
+         * FK then reconstructs:
          *
-         * skeleton.setWorldBonePosition(ankle...)
-         *
-         * because that would break the anatomical
-         * chain created by Skeleton.
+         * hip → knee → ankle → foot → toe
          */
 
         this.skeleton.setWorldBoneAngle(
+
             thighName,
+
             result.hipAngle
         );
 
+
         this.skeleton.setWorldBoneAngle(
+
             shinName,
+
             result.kneeAngle
         );
 
+
         /*
-         * Foot remains attached to ankle through FK.
+         * Foot stays physically attached to ankle.
+         *
+         * It receives a local orientation relative to
+         * the shin, but its position is never moved.
          */
+
         const footName =
             thighName === "thighL"
                 ? "footL"
                 : "footR";
+
 
         const foot =
             this.skeleton.getBone(
                 footName
             );
 
+
         if (foot) {
-            foot.localAngle = 0;
+
+            /*
+             * Preserve anatomical foot direction
+             * instead of forcing it to world zero.
+             */
+
+            foot.localAngle =
+                foot.restAngle;
         }
+
 
         this.skeleton.updateWorldTransforms();
     }
@@ -1224,6 +1498,7 @@ export class Character {
             return;
         }
 
+
         const dx =
             target.x -
             this.position.x;
@@ -1232,23 +1507,33 @@ export class Character {
             target.y -
             this.position.y;
 
+
         const d =
             Math.hypot(
                 dx,
                 dy
             );
 
-        if (d < 0.001) {
+
+        if (
+            d <
+            0.001
+        ) {
+
             return;
         }
 
+
         if (
-            duration > 0
+            duration >
+            0
         ) {
+
             this.speed =
                 d /
                 duration;
         }
+
 
         this.targetMoveAngle =
             Math.atan2(
@@ -1256,7 +1541,10 @@ export class Character {
                 dx
             );
 
-        this.isMoving = true;
+
+        this.isMoving =
+            true;
+
 
         this.animation.setState(
             ANIMATION_STATES.WALK
@@ -1279,45 +1567,70 @@ export class Character {
         this.position.x = 0;
         this.position.y = 0;
 
+
         this.moveAngle = 0;
         this.lookAngle = 0;
+
 
         this.targetMoveAngle = 0;
         this.targetLookAngle = 0;
 
+
         this.velocity.x = 0;
         this.velocity.y = 0;
 
-        this.travelledDistance = 0;
+
+        this.travelledDistance =
+            0;
+
 
         this.path = [];
         this.pathIndex = 0;
 
-        this.currentSurface = null;
-        this.currentSurfaceT = 0;
 
-        this.lookTarget = null;
+        this.currentSurface =
+            null;
 
-        this.isMoving = false;
+        this.currentSurfaceT =
+            0;
+
+
+        this.lookTarget =
+            null;
+
+
+        this.isMoving =
+            false;
+
 
         this.gait.reset();
 
         this.animation.reset();
 
+
+        /*
+         * Reset to true anatomical rest pose.
+         */
+
         this.skeleton.resetPose();
+
 
         this.skeleton.setRootPosition(
             0,
             0
         );
 
+
         this.skeleton.setRootAngle(
             0
         );
 
+
         this.skeleton.updateWorldTransforms();
 
-        this.initialized = false;
+
+        this.initialized =
+            false;
     }
 
 
@@ -1334,8 +1647,12 @@ export class Character {
     getWorldPosition() {
 
         return {
-            x: this.position.x,
-            y: this.position.y
+
+            x:
+                this.position.x,
+
+            y:
+                this.position.y
         };
     }
 
@@ -1343,8 +1660,12 @@ export class Character {
     getVelocity() {
 
         return {
-            x: this.velocity.x,
-            y: this.velocity.y
+
+            x:
+                this.velocity.x,
+
+            y:
+                this.velocity.y
         };
     }
 
@@ -1352,14 +1673,23 @@ export class Character {
     getFootTargets() {
 
         return {
+
             left: {
-                x: this.footTargets.left.x,
-                y: this.footTargets.left.y
+
+                x:
+                    this.footTargets.left.x,
+
+                y:
+                    this.footTargets.left.y
             },
 
             right: {
-                x: this.footTargets.right.x,
-                y: this.footTargets.right.y
+
+                x:
+                    this.footTargets.right.x,
+
+                y:
+                    this.footTargets.right.y
             }
         };
     }
@@ -1374,29 +1704,42 @@ export class Character {
         const skeleton =
             this.skeleton.validate();
 
+
         const gait =
             this.gait.validate();
+
 
         return {
 
             valid:
+
                 skeleton.valid &&
+
                 gait.valid &&
+
                 Number.isFinite(
                     this.position.x
                 ) &&
+
                 Number.isFinite(
                     this.position.y
                 ),
+
 
             skeleton,
 
             gait,
 
+
             position: {
-                x: this.position.x,
-                y: this.position.y
+
+                x:
+                    this.position.x,
+
+                y:
+                    this.position.y
             },
+
 
             state:
                 this.animation.snapshot()
