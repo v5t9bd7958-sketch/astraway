@@ -1,3 +1,27 @@
+// ASTRAWAY 2.0
+// Full Body Controller
+//
+// Единственный владелец процедурной позы верхней части тела.
+//
+// Pipeline:
+// GravityFrame + Gait + BodyState
+//              ↓
+//        locomotion state
+//              ↓
+//          full pose
+//              ↓
+// pelvis/root — Character
+// spine       — FBC
+// shoulders   — FBC
+// arms        — FBC
+// head        — FBC
+//
+// FBC НЕ делает FK.
+// FBC НЕ решает IK.
+// FBC НЕ двигает персонажа.
+// FBC строит целостную позу относительно текущего
+// gravity frame и состояния опор.
+
 import {
     clamp,
     clamp01,
@@ -6,45 +30,111 @@ import {
     shortestAngleDelta
 } from "../MathUtils.js";
 
+
 const DEFAULTS = {
-    forwardLeanMax: 0.14,
-    lateralLeanMax: 0.07,
-    turnLeanMax: 0.06,
 
-    spineLowerShare: 0.34,
-    spineMidShare: 0.26,
-    spineUpperShare: 0.22,
-    chestShare: 0.18,
+    // -----------------------------------------------------
+    // BODY
+    // -----------------------------------------------------
 
-    chestCounterScale: 0.50,
+    forwardLean:
+        0.12,
 
-    armSwingMax: 0.50,
-    armSwingIdle: 0.03,
+    lateralBalance:
+        0.10,
 
-    forearmBaseFlex: 0.12,
-    forearmSwingFlex: 0.28,
+    accelerationLean:
+        0.045,
 
-    neckLookShare: 0.22,
-    headLookShare: 0.58,
-    headStabilize: 0.18,
+    torsoCounter:
+        0.045,
 
-    intensityDamp: 8,
-    accelDamp: 6,
-    torsoDamp: 11,
-    armDamp: 13,
-    headDamp: 15,
+    // -----------------------------------------------------
+    // WALK
+    // -----------------------------------------------------
 
-    unstableBoost: 1.30,
+    pelvisRhythm:
+        0.055,
 
-    speedForFullIntensity: 90,
+    torsoRhythm:
+        0.065,
 
-    maxTorsoOffset: 0.48,
-    maxArmOffset: 0.70,
-    maxHeadOffset: 0.65
+    shoulderCounter:
+        0.055,
+
+    armSwing:
+        0.48,
+
+    armSwingMin:
+        0.035,
+
+    elbowFlex:
+        0.22,
+
+    elbowBase:
+        0.10,
+
+    // -----------------------------------------------------
+    // HEAD
+    // -----------------------------------------------------
+
+    neckLook:
+        0.20,
+
+    headLook:
+        0.48,
+
+    headStabilize:
+        0.20,
+
+    // -----------------------------------------------------
+    // DAMPING
+    // -----------------------------------------------------
+
+    intensityDamp:
+        8,
+
+    accelerationDamp:
+        7,
+
+    torsoDamp:
+        12,
+
+    armDamp:
+        14,
+
+    headDamp:
+        15,
+
+    // -----------------------------------------------------
+    // SAFETY
+    // -----------------------------------------------------
+
+    maxSpine:
+        0.42,
+
+    maxArm:
+        0.65,
+
+    maxHead:
+        0.60,
+
+    unstableBoost:
+        1.25,
+
+    speedForFullIntensity:
+        90
 };
 
+
 export default class FullBodyController {
-    constructor(skeleton, bodyState, options = {}) {
+
+    constructor(
+        skeleton,
+        bodyState,
+        options = {}
+    ) {
+
         if (!skeleton) {
             throw new Error(
                 "FullBodyController: skeleton is required"
@@ -57,6 +147,7 @@ export default class FullBodyController {
             );
         }
 
+
         const {
             gravityFrame = null,
             gait = null,
@@ -64,8 +155,19 @@ export default class FullBodyController {
             ...directTuning
         } = options || {};
 
-        this.skeleton = skeleton;
-        this.bodyState = bodyState;
+
+        this.skeleton =
+            skeleton;
+
+        this.bodyState =
+            bodyState;
+
+        this.gravityFrame =
+            gravityFrame;
+
+        this.gait =
+            gait;
+
 
         this.tuning = {
             ...DEFAULTS,
@@ -73,493 +175,361 @@ export default class FullBodyController {
             ...tuning
         };
 
-        this.gravityFrame = gravityFrame;
-        this.gait = gait;
 
-        /*
-         * Current pose offsets.
-         * These are local-angle offsets relative to each bone's
-         * anatomical rest angle.
-         */
-        this.offsets = {
-            spineLower: 0,
-            spineMid: 0,
-            spineUpper: 0,
-            chest: 0,
-
-            upperArmL: 0,
-            upperArmR: 0,
-
-            forearmL: 0,
-            forearmR: 0,
-
-            neck: 0,
-            head: 0
-        };
-
-        /*
-         * Desired pose targets before damping.
-         */
-        this.targets = {
-            spineLower: 0,
-            spineMid: 0,
-            spineUpper: 0,
-            chest: 0,
-
-            upperArmL: 0,
-            upperArmR: 0,
-
-            forearmL: 0,
-            forearmR: 0,
-
-            neck: 0,
-            head: 0
-        };
-
-        this.intensity = 0;
-
-        this.previousSpeed = 0;
-        this.smoothedAcceleration = 0;
-        this._hasPrevSpeed = false;
-
-        /*
-         * Cache all bones used by the controller.
-         * No repeated skeleton lookups during the frame.
-         */
         this.bones = {
-            spineLower: this.skeleton.getBone("spineLower"),
-            spineMid: this.skeleton.getBone("spineMid"),
-            spineUpper: this.skeleton.getBone("spineUpper"),
-            chest: this.skeleton.getBone("chest"),
 
-            upperArmL: this.skeleton.getBone("upperArmL"),
-            upperArmR: this.skeleton.getBone("upperArmR"),
+            spineLower:
+                skeleton.getBone(
+                    "spineLower"
+                ),
 
-            forearmL: this.skeleton.getBone("forearmL"),
-            forearmR: this.skeleton.getBone("forearmR"),
+            spineMid:
+                skeleton.getBone(
+                    "spineMid"
+                ),
 
-            neck: this.skeleton.getBone("neck"),
-            head: this.skeleton.getBone("head")
+            spineUpper:
+                skeleton.getBone(
+                    "spineUpper"
+                ),
+
+            chest:
+                skeleton.getBone(
+                    "chest"
+                ),
+
+            upperArmL:
+                skeleton.getBone(
+                    "upperArmL"
+                ),
+
+            upperArmR:
+                skeleton.getBone(
+                    "upperArmR"
+                ),
+
+            forearmL:
+                skeleton.getBone(
+                    "forearmL"
+                ),
+
+            forearmR:
+                skeleton.getBone(
+                    "forearmR"
+                ),
+
+            neck:
+                skeleton.getBone(
+                    "neck"
+                ),
+
+            head:
+                skeleton.getBone(
+                    "head"
+                )
         };
 
-        this._validateBoneCache();
-    }
 
-    _validateBoneCache() {
-        for (const [name, bone] of Object.entries(this.bones)) {
+        for (
+            const [name, bone]
+            of Object.entries(this.bones)
+        ) {
+
             if (!bone) {
+
                 throw new Error(
-                    `FullBodyController: required bone "${name}" not found`
+                    `FullBodyController: missing bone "${name}"`
                 );
             }
         }
+
+
+        this.targets = {};
+        this.offsets = {};
+
+        for (
+            const name
+            of Object.keys(this.bones)
+        ) {
+
+            this.targets[name] = 0;
+            this.offsets[name] = 0;
+        }
+
+
+        this.intensity =
+            0;
+
+        this.previousSpeed =
+            0;
+
+        this.acceleration =
+            0;
+
+        this.hasPreviousSpeed =
+            false;
     }
 
-    update(dt, context = {}) {
-        const safeDt = clamp(
-            finite(dt, 0),
-            0,
-            0.1
-        );
+
+    // =====================================================
+    // UPDATE
+    // =====================================================
+
+    update(
+        dt,
+        context = {}
+    ) {
+
+        const safeDt =
+            clamp(
+                finite(dt, 0),
+                0,
+                0.1
+            );
+
 
         if (safeDt <= 0) {
             return;
         }
 
-        const speed = Math.max(
-            0,
-            finite(context.speed, 0)
-        );
 
-        /*
-         * The speed fallback is intentional.
-         * FBC must continue working even if Character forgets
-         * to explicitly pass isMoving.
-         */
-        const isMoving =
+        if (context.gravityFrame) {
+
+            this.gravityFrame =
+                context.gravityFrame;
+        }
+
+
+        if (context.gait) {
+
+            this.gait =
+                context.gait;
+        }
+
+
+        const speed =
+            Math.max(
+                0,
+                finite(
+                    context.speed,
+                    0
+                )
+            );
+
+
+        const moving =
             context.isMoving === true ||
             speed > 0.5;
 
-        const moveAngle = finite(
-            context.moveAngle,
-            0
-        );
 
-        const lookAngle = finite(
-            context.lookAngle,
-            moveAngle
-        );
+        const moveAngle =
+            finite(
+                context.moveAngle,
+                0
+            );
 
-        const turnRate = finite(
-            context.turnRate,
-            0
-        );
 
-        if (context.gravityFrame) {
-            this.gravityFrame = context.gravityFrame;
-        }
+        const lookAngle =
+            finite(
+                context.lookAngle,
+                moveAngle
+            );
 
-        if (context.gait) {
-            this.gait = context.gait;
-        }
 
-        /*
-         * Movement intensity.
-         *
-         * 0 = idle
-         * 1 = full configured locomotion intensity
-         */
-        const speedRatio = clamp01(
-            speed /
-            Math.max(
-                1,
-                this.tuning.speedForFullIntensity
-            )
-        );
+        const turnRate =
+            finite(
+                context.turnRate,
+                0
+            );
 
-        const targetIntensity = isMoving
-            ? speedRatio
-            : 0;
 
-        this.intensity = damp(
-            this.intensity,
-            targetIntensity,
-            this.tuning.intensityDamp,
-            safeDt
-        );
+        // -------------------------------------------------
+        // INTENSITY
+        // -------------------------------------------------
 
-        /*
-         * First-frame acceleration protection.
-         *
-         * The first speed sample establishes the baseline instead
-         * of producing a fake acceleration spike.
-         */
-        let acceleration = 0;
+        const speedRatio =
+            clamp01(
+                speed /
+                Math.max(
+                    1,
+                    this.tuning.speedForFullIntensity
+                )
+            );
 
-        if (this._hasPrevSpeed) {
-            acceleration =
-                (speed - this.previousSpeed) /
-                Math.max(safeDt, 0.0001);
+
+        const targetIntensity =
+            moving
+                ? speedRatio
+                : 0;
+
+
+        this.intensity =
+            damp(
+                this.intensity,
+                targetIntensity,
+                this.tuning.intensityDamp,
+                safeDt
+            );
+
+
+        // -------------------------------------------------
+        // ACCELERATION
+        // -------------------------------------------------
+
+        if (this.hasPreviousSpeed) {
+
+            const rawAcceleration =
+                (
+                    speed -
+                    this.previousSpeed
+                ) /
+                Math.max(
+                    safeDt,
+                    0.0001
+                );
+
+
+            this.acceleration =
+                damp(
+                    this.acceleration,
+                    rawAcceleration,
+                    this.tuning.accelerationDamp,
+                    safeDt
+                );
+
         } else {
-            this._hasPrevSpeed = true;
+
+            this.hasPreviousSpeed =
+                true;
+
+            this.acceleration =
+                0;
         }
 
-        this.previousSpeed = speed;
 
-        this.smoothedAcceleration = damp(
-            this.smoothedAcceleration,
-            acceleration,
-            this.tuning.accelDamp,
-            safeDt
-        );
+        this.previousSpeed =
+            speed;
 
-        /*
-         * BodyState is authoritative for balance.
-         *
-         * API:
-         * {
-         *   supported,
-         *   stable,
-         *   supportPoint,
-         *   comOffset
-         * }
-         */
+
+        // -------------------------------------------------
+        // BALANCE
+        // -------------------------------------------------
+
         const balance =
-            typeof this.bodyState.getBalance === "function"
+            typeof this.bodyState.getBalance ===
+                "function"
                 ? this.bodyState.getBalance()
                 : null;
 
-        const weightDistribution =
-            this.bodyState.weightDistribution || null;
 
-        /*
-         * Unsupported body:
-         * slightly increase active response.
-         *
-         * Supported + stable:
-         * normal response.
-         *
-         * Supported + unstable:
-         * stronger correction.
-         */
-        const balanceScale =
+        const weight =
+            this.bodyState.weightDistribution ||
+            {
+                left: 0.5,
+                right: 0.5
+            };
+
+
+        const balanceBoost =
             !balance?.supported
-                ? 1.10
+                ? 1
                 : balance.stable
-                    ? 1.0
+                    ? 1
                     : this.tuning.unstableBoost;
 
-        /*
-         * Actual gait state is preferred over a synthetic phase.
-         */
-        const armMotion =
-            this._resolveArmMotion(
-                isMoving,
-                context
-            );
 
-        this._computeTargets({
-            speed,
-            isMoving,
-            moveAngle,
-            lookAngle,
-            turnRate,
-            balance,
-            weightDistribution,
-            balanceScale,
-            armMotion
-        });
+        // -------------------------------------------------
+        // GAIT
+        // -------------------------------------------------
 
-        this._dampOffsets(safeDt);
+        const gait =
+            this.gait;
 
-        /*
-         * FBC writes local pose only.
-         *
-         * IMPORTANT:
-         * No skeleton.updateWorldTransforms() here.
-         *
-         * Character owns the final FK pass after IK.
-         */
-        this._applyPose();
-    }
 
-    /*
-     * Resolve actual arm direction from the stepping leg.
-     *
-     * right leg stepping -> left arm forward
-     * left leg stepping  -> right arm forward
-     *
-     * Returns:
-     *   direction: -1 / +1
-     *   envelope:  0..1
-     */
-    _resolveArmMotion(isMoving, context) {
-        const gait = this.gait;
-
-        if (
+        const phase =
             gait &&
-            gait.legs &&
-            gait.legs.left &&
-            gait.legs.right
-        ) {
-            const left = gait.legs.left;
-            const right = gait.legs.right;
-
-            if (right.stepping) {
-                const progress = clamp01(
-                    finite(right.progress, 0)
+            Number.isFinite(
+                gait.phase
+            )
+                ? gait.phase
+                : finite(
+                    context.gaitPhase,
+                    0
                 );
 
-                return {
-                    direction: 1,
-                    envelope: this._stepEnvelope(
-                        progress,
-                        1
-                    )
-                };
-            }
-
-            if (left.stepping) {
-                const progress = clamp01(
-                    finite(left.progress, 0)
-                );
-
-                return {
-                    direction: -1,
-                    envelope: this._stepEnvelope(
-                        progress,
-                        -1
-                    )
-                };
-            }
-
-            /*
-             * Both feet planted.
-             *
-             * Keep only a very small residual motion so the body
-             * does not freeze mechanically between steps.
-             */
-            if (
-                Number.isFinite(gait.phase) &&
-                isMoving
-            ) {
-                const phase = gait.phase * Math.PI * 2;
-
-                return {
-                    direction: Math.sin(phase) >= 0
-                        ? 1
-                        : -1,
-                    envelope:
-                        Math.abs(Math.sin(phase)) * 0.15
-                };
-            }
-        }
 
         /*
-         * Context fallback for compatibility.
+         * phase:
+         *
+         * 0 → 1
+         *
+         * gait uses one complete alternating cycle.
          */
-        if (context.rightStepping === true) {
-            const progress = clamp01(
-                finite(context.rightStepProgress, 0.5)
+        const cycle =
+            phase *
+            Math.PI *
+            2;
+
+
+        const stride =
+            Math.sin(
+                cycle
             );
 
-            return {
-                direction: 1,
-                envelope: this._stepEnvelope(
-                    progress,
-                    1
-                )
-            };
-        }
 
-        if (context.leftStepping === true) {
-            const progress = clamp01(
-                finite(context.leftStepProgress, 0.5)
+        const oppositeStride =
+            -stride;
+
+
+        /*
+         * Weight transfer is deliberately independent
+         * from the visual arm swing.
+         *
+         * This makes the torso respond to actual support
+         * rather than merely following a sine wave.
+         */
+        const weightShift =
+            clamp(
+                finite(
+                    weight.right,
+                    0.5
+                ) -
+                finite(
+                    weight.left,
+                    0.5
+                ),
+                -1,
+                1
             );
 
-            return {
-                direction: -1,
-                envelope: this._stepEnvelope(
-                    progress,
-                    -1
-                )
-            };
-        }
 
-        if (
-            Number.isFinite(context.gaitPhase) &&
-            isMoving
-        ) {
-            const phase =
-                context.gaitPhase *
-                Math.PI *
-                2;
+        // -------------------------------------------------
+        // SURFACE FRAME
+        // -------------------------------------------------
 
-            return {
-                direction: Math.sin(phase) >= 0
-                    ? 1
-                    : -1,
-                envelope:
-                    Math.abs(Math.sin(phase)) * 0.15
-            };
-        }
+        const frame =
+            this.gravityFrame?.frame ||
+            this.gravityFrame?.getFrame?.() ||
+            null;
 
-        return {
-            direction: 0,
-            envelope: 0
-        };
-    }
-
-    /*
-     * Step envelope.
-     *
-     * The direction is NOT derived from progress.
-     * Progress describes where the leg is inside its step.
-     * Direction comes from which leg is stepping.
-     *
-     * The curve deliberately differs from a plain sin(PI * p):
-     * - gentle start
-     * - stronger mid-step
-     * - slightly longer release
-     *
-     * This is a locomotion envelope, not a physical simulation.
-     */
-    _stepEnvelope(progress, direction) {
-        const p = clamp01(
-            finite(progress, 0)
-        );
-
-        if (p <= 0 || p >= 1) {
-            return 0;
-        }
 
         /*
-         * Smoothstep gives a controlled 0→1→0 base envelope.
-         */
-        const rise =
-            p * p * (3 - 2 * p);
-
-        /*
-         * Mild asymmetry.
+         * GravityFrame has already rotated the root so that
+         * local +X follows the surface tangent and local
+         * -Y follows surface normal.
          *
-         * Positive direction slightly favors the earlier part
-         * of the swing, negative direction slightly favors the
-         * later part. This is deliberately subtle.
+         * Therefore the full body corrections below remain
+         * local anatomical corrections.
          */
-        const bias =
-            direction >= 0
-                ? 0.92 + 0.08 * (1 - p)
-                : 0.92 + 0.08 * p;
 
-        /*
-         * Convert smoothstep into a hump.
-         *
-         * The second factor prevents a flat plateau.
-         */
-        const release =
-            1 -
-            p * 0.18;
 
-        return clamp01(
-            rise *
-            (1 - p * 0.72) *
-            1.75 *
-            bias *
-            release
-        );
-    }
+        // -------------------------------------------------
+        // BALANCE INPUT
+        // -------------------------------------------------
 
-    _computeTargets({
-        speed,
-        isMoving,
-        moveAngle,
-        lookAngle,
-        turnRate,
-        balance,
-        weightDistribution,
-        balanceScale,
-        armMotion
-    }) {
-        const t = this.tuning;
+        let balanceLateral =
+            0;
 
-        const intensity =
-            clamp01(this.intensity) *
-            balanceScale;
-
-        /*
-         * Acceleration normalized against the configured movement
-         * scale. This is intentionally conservative.
-         */
-        const accelerationNorm = clamp(
-            this.smoothedAcceleration /
-            Math.max(
-                1,
-                t.speedForFullIntensity
-            ),
-            -1,
-            1
-        );
-
-        /*
-         * Forward body response.
-         */
-        const forwardLean = clamp(
-            intensity *
-                t.forwardLeanMax +
-            accelerationNorm *
-                0.045,
-            -t.forwardLeanMax,
-            t.forwardLeanMax
-        );
-
-        /*
-         * COM-based lateral balance.
-         *
-         * BodyState currently exposes comOffset in world space.
-         * Its current balance implementation uses world X, so that
-         * is the signal consumed here.
-         */
-        let comShift = 0;
 
         if (
             balance &&
@@ -568,434 +538,459 @@ export default class FullBodyController {
                 balance.comOffset.x
             )
         ) {
-            comShift = clamp(
-                balance.comOffset.x / 30,
+
+            /*
+             * BodyState provides COM offset in the current
+             * support frame.
+             */
+            balanceLateral =
+                clamp(
+                    balance.comOffset.x /
+                    24,
+                    -1,
+                    1
+                );
+        }
+
+
+        // -------------------------------------------------
+        // FORWARD LEAN
+        // -------------------------------------------------
+
+        const locomotion =
+            clamp01(
+                this.intensity
+            );
+
+
+        const accelerationInput =
+            clamp(
+                this.acceleration /
+                Math.max(
+                    1,
+                    this.tuning.speedForFullIntensity
+                ),
                 -1,
                 1
             );
-        }
+
+
+        const forward =
+            locomotion *
+            this.tuning.forwardLean +
+            accelerationInput *
+            this.tuning.accelerationLean;
+
+
+        // -------------------------------------------------
+        // LATERAL BALANCE
+        // -------------------------------------------------
+
+        const lateral =
+            balanceLateral *
+            this.tuning.lateralBalance *
+            balanceBoost;
+
 
         /*
-         * Weight distribution provides an additional signal.
+         * Weight transfer adds a small dynamic component.
+         */
+        const transfer =
+            weightShift *
+            this.tuning.pelvisRhythm *
+            0.60;
+
+
+        // -------------------------------------------------
+        // TORSO
+        // -------------------------------------------------
+
+        /*
+         * The spine is a distributed chain.
          *
-         * right - left:
-         *   positive = more weight on right
-         *   negative = more weight on left
-         */
-        let weightShift = 0;
-
-        if (
-            weightDistribution &&
-            Number.isFinite(
-                weightDistribution.left
-            ) &&
-            Number.isFinite(
-                weightDistribution.right
-            )
-        ) {
-            weightShift = clamp(
-                weightDistribution.right -
-                weightDistribution.left,
-                -1,
-                1
-            );
-        }
-
-        /*
-         * COM remains the stronger signal.
-         * Weight distribution supplies local responsiveness.
-         */
-        const lateralInput = clamp(
-            comShift * 0.65 +
-            weightShift * 0.35,
-            -1,
-            1
-        );
-
-        const lateralLean =
-            lateralInput *
-            t.lateralLeanMax *
-            intensity;
-
-        /*
-         * Turning response.
-         */
-        const turnInput = clamp(
-            turnRate / 8,
-            -1,
-            1
-        );
-
-        const turnLean =
-            turnInput *
-            t.turnLeanMax *
-            intensity;
-
-        /*
-         * Combined locomotion drive.
-         */
-        const drive =
-            forwardLean +
-            lateralLean * 0.40 +
-            turnLean * 0.25;
-
-        /*
-         * The root pelvis remains authoritative.
+         * No single-bone "lean".
          *
-         * We distribute the response through the spine instead
-         * of inventing a second pelvis rotation layer.
+         * Lower:
+         *   pelvis → lumbar
+         *
+         * Mid:
+         *   lumbar → thoracic
+         *
+         * Upper:
+         *   thoracic → chest
+         *
+         * Chest:
+         *   counter-rotation / stabilization
          */
+
+        const torsoRhythm =
+            stride *
+            this.tuning.torsoRhythm *
+            locomotion;
+
+
         this.targets.spineLower =
-            drive *
-            t.spineLowerShare;
+            clamp(
+                forward * 0.34 +
+                lateral * 0.35 +
+                transfer * 0.30 +
+                torsoRhythm * 0.30,
+                -this.tuning.maxSpine,
+                this.tuning.maxSpine
+            );
+
 
         this.targets.spineMid =
-            drive *
-            t.spineMidShare;
+            clamp(
+                forward * 0.27 +
+                lateral * 0.30 +
+                transfer * 0.20 +
+                torsoRhythm * 0.50,
+                -this.tuning.maxSpine,
+                this.tuning.maxSpine
+            );
+
 
         this.targets.spineUpper =
-            drive *
-            t.spineUpperShare;
+            clamp(
+                forward * 0.22 +
+                lateral * 0.20 +
+                transfer * 0.10 +
+                torsoRhythm * 0.30,
+                -this.tuning.maxSpine,
+                this.tuning.maxSpine
+            );
 
+
+        /*
+         * Chest counteracts lower-body rhythm.
+         */
         this.targets.chest =
-            drive *
-            t.chestShare -
-            drive *
-            t.chestCounterScale *
-            0.12;
+            clamp(
+                -torsoRhythm *
+                this.tuning.torsoCounter,
+                -this.tuning.maxSpine,
+                this.tuning.maxSpine
+            );
+
+
+        // -------------------------------------------------
+        // SHOULDERS
+        // -------------------------------------------------
 
         /*
-         * ARM SWING
+         * Opposite shoulder compensation:
          *
-         * Direction:
-         *   right leg -> left arm forward
-         *   left leg  -> right arm forward
+         * left leg forward
+         *     →
+         * right shoulder forward
+         *
+         * This is what prevents the upper body from
+         * remaining a rigid cross.
          */
-        const swingAmplitude = isMoving
-            ? t.armSwingMax *
-              clamp01(this.intensity) *
-              balanceScale
-            : t.armSwingIdle;
+        const shoulder =
+            oppositeStride *
+            this.tuning.shoulderCounter *
+            locomotion;
 
-        const signedArmSwing =
-            armMotion.direction *
-            armMotion.envelope *
-            swingAmplitude;
 
-        /*
-         * Turning suppresses excessive arm swing.
-         */
-        const turnArmDamping =
+        // -------------------------------------------------
+        // ARMS
+        // -------------------------------------------------
+
+        const armAmplitude =
+            moving
+                ? Math.max(
+                    this.tuning.armSwingMin,
+                    this.tuning.armSwing *
+                    locomotion
+                )
+                : this.tuning.armSwingMin;
+
+
+        const turnDamping =
             1 -
             Math.min(
-                0.45,
-                Math.abs(turnInput) *
-                0.45
+                0.35,
+                Math.abs(
+                    turnRate
+                ) *
+                0.04
             );
 
+
+        /*
+         * Arms are coupled to opposite legs.
+         */
         this.targets.upperArmL =
             clamp(
-                signedArmSwing *
-                turnArmDamping,
-                -t.maxArmOffset,
-                t.maxArmOffset
+                (
+                    stride *
+                    armAmplitude +
+                    shoulder
+                ) *
+                turnDamping,
+                -this.tuning.maxArm,
+                this.tuning.maxArm
             );
+
 
         this.targets.upperArmR =
             clamp(
-                -signedArmSwing *
-                turnArmDamping,
-                -t.maxArmOffset,
-                t.maxArmOffset
+                (
+                    oppositeStride *
+                    armAmplitude -
+                    shoulder
+                ) *
+                turnDamping,
+                -this.tuning.maxArm,
+                this.tuning.maxArm
             );
 
-        /*
-         * FOREARMS
-         *
-         * Baseline flex + locomotion envelope.
-         *
-         * No dependency on upper-arm angle.
-         */
-        const forearmFlex =
-            t.forearmBaseFlex +
-            armMotion.envelope *
-            t.forearmSwingFlex *
-            clamp01(this.intensity);
+
+        // -------------------------------------------------
+        // ELBOWS
+        // -------------------------------------------------
+
+        const elbow =
+            this.tuning.elbowBase +
+            Math.abs(
+                stride
+            ) *
+            this.tuning.elbowFlex *
+            locomotion;
+
 
         this.targets.forearmL =
             clamp(
-                forearmFlex,
-                -t.maxArmOffset,
-                t.maxArmOffset
+                elbow,
+                -this.tuning.maxArm,
+                this.tuning.maxArm
             );
+
 
         this.targets.forearmR =
             clamp(
-                forearmFlex,
-                -t.maxArmOffset,
-                t.maxArmOffset
+                elbow,
+                -this.tuning.maxArm,
+                this.tuning.maxArm
             );
 
-        /*
-         * HEAD / NECK
-         *
-         * Shortest angular path prevents snapping at ±PI.
-         */
+
+        // -------------------------------------------------
+        // HEAD
+        // -------------------------------------------------
+
         const lookDelta =
             shortestAngleDelta(
                 moveAngle,
                 lookAngle
             );
 
-        const normalizedLook = clamp(
-            lookDelta / Math.PI,
-            -1,
-            1
-        );
 
+        const lookInput =
+            clamp(
+                lookDelta /
+                Math.PI,
+                -1,
+                1
+            );
+
+
+        /*
+         * Head stabilizes against torso movement.
+         */
         this.targets.neck =
-            normalizedLook *
-            t.neckLookShare;
+            clamp(
+                lookInput *
+                this.tuning.neckLook -
+                torsoRhythm *
+                0.20,
+                -this.tuning.maxHead,
+                this.tuning.maxHead
+            );
+
 
         this.targets.head =
-            normalizedLook *
-            t.headLookShare -
-            this.targets.chest *
-            t.headStabilize;
+            clamp(
+                lookInput *
+                this.tuning.headLook -
+                torsoRhythm *
+                this.tuning.headStabilize,
+                -this.tuning.maxHead,
+                this.tuning.maxHead
+            );
 
-        this.targets.neck = clamp(
-            this.targets.neck,
-            -t.maxHeadOffset,
-            t.maxHeadOffset
-        );
 
-        this.targets.head = clamp(
-            this.targets.head,
-            -t.maxHeadOffset,
-            t.maxHeadOffset
-        );
+        // -------------------------------------------------
+        // DAMP
+        // -------------------------------------------------
 
-        /*
-         * Final safety limits.
-         */
-        this.targets.spineLower = clamp(
-            this.targets.spineLower,
-            -t.maxTorsoOffset,
-            t.maxTorsoOffset
-        );
+        for (
+            const name
+            of Object.keys(
+                this.offsets
+            )
+        ) {
 
-        this.targets.spineMid = clamp(
-            this.targets.spineMid,
-            -t.maxTorsoOffset,
-            t.maxTorsoOffset
-        );
+            const isArm =
+                name === "upperArmL" ||
+                name === "upperArmR" ||
+                name === "forearmL" ||
+                name === "forearmR";
 
-        this.targets.spineUpper = clamp(
-            this.targets.spineUpper,
-            -t.maxTorsoOffset,
-            t.maxTorsoOffset
-        );
 
-        this.targets.chest = clamp(
-            this.targets.chest,
-            -t.maxTorsoOffset,
-            t.maxTorsoOffset
-        );
-    }
+            const isHead =
+                name === "neck" ||
+                name === "head";
 
-    _dampOffsets(dt) {
-        const t = this.tuning;
 
-        this.offsets.spineLower = damp(
-            this.offsets.spineLower,
-            this.targets.spineLower,
-            t.torsoDamp,
-            dt
-        );
+            const rate =
+                isHead
+                    ? this.tuning.headDamp
+                    : isArm
+                        ? this.tuning.armDamp
+                        : this.tuning.torsoDamp;
 
-        this.offsets.spineMid = damp(
-            this.offsets.spineMid,
-            this.targets.spineMid,
-            t.torsoDamp,
-            dt
-        );
 
-        this.offsets.spineUpper = damp(
-            this.offsets.spineUpper,
-            this.targets.spineUpper,
-            t.torsoDamp,
-            dt
-        );
-
-        this.offsets.chest = damp(
-            this.offsets.chest,
-            this.targets.chest,
-            t.torsoDamp,
-            dt
-        );
-
-        this.offsets.upperArmL = damp(
-            this.offsets.upperArmL,
-            this.targets.upperArmL,
-            t.armDamp,
-            dt
-        );
-
-        this.offsets.upperArmR = damp(
-            this.offsets.upperArmR,
-            this.targets.upperArmR,
-            t.armDamp,
-            dt
-        );
-
-        this.offsets.forearmL = damp(
-            this.offsets.forearmL,
-            this.targets.forearmL,
-            t.armDamp,
-            dt
-        );
-
-        this.offsets.forearmR = damp(
-            this.offsets.forearmR,
-            this.targets.forearmR,
-            t.armDamp,
-            dt
-        );
-
-        this.offsets.neck = damp(
-            this.offsets.neck,
-            this.targets.neck,
-            t.headDamp,
-            dt
-        );
-
-        this.offsets.head = damp(
-            this.offsets.head,
-            this.targets.head,
-            t.headDamp,
-            dt
-        );
-    }
-
-    _applyPose() {
-        const b = this.bones;
-        const o = this.offsets;
-
-        /*
-         * FULL-BODY OWNERSHIP
-         *
-         * FBC owns:
-         *   spine
-         *   chest
-         *   upper arms
-         *   forearms
-         *   neck
-         *   head
-         *
-         * FBC does NOT own:
-         *   root pelvis transform
-         *   leg IK
-         *   final FK/world transform update
-         *
-         * Character performs final skeleton FK after IK.
-         */
-
-        b.spineLower.localAngle =
-            b.spineLower.restAngle +
-            o.spineLower;
-
-        b.spineMid.localAngle =
-            b.spineMid.restAngle +
-            o.spineMid;
-
-        b.spineUpper.localAngle =
-            b.spineUpper.restAngle +
-            o.spineUpper;
-
-        b.chest.localAngle =
-            b.chest.restAngle +
-            o.chest;
-
-        b.upperArmL.localAngle =
-            b.upperArmL.restAngle +
-            o.upperArmL;
-
-        b.upperArmR.localAngle =
-            b.upperArmR.restAngle +
-            o.upperArmR;
-
-        b.forearmL.localAngle =
-            b.forearmL.restAngle +
-            o.forearmL;
-
-        b.forearmR.localAngle =
-            b.forearmR.restAngle +
-            o.forearmR;
-
-        b.neck.localAngle =
-            b.neck.restAngle +
-            o.neck;
-
-        b.head.localAngle =
-            b.head.restAngle +
-            o.head;
-    }
-
-    reset() {
-        for (const key of Object.keys(this.offsets)) {
-            this.offsets[key] = 0;
-            this.targets[key] = 0;
+            this.offsets[name] =
+                damp(
+                    this.offsets[name],
+                    this.targets[name],
+                    rate,
+                    safeDt
+                );
         }
 
-        this.intensity = 0;
-        this.previousSpeed = 0;
-        this.smoothedAcceleration = 0;
-        this._hasPrevSpeed = false;
 
-        this._applyPose();
+        this.applyPose();
     }
 
-    setGravityFrame(gravityFrame) {
+
+    // =====================================================
+    // APPLY
+    // =====================================================
+
+    applyPose() {
+
+        for (
+            const [name, bone]
+            of Object.entries(
+                this.bones
+            )
+        ) {
+
+            bone.localAngle =
+                bone.restAngle +
+                this.offsets[name];
+        }
+    }
+
+
+    // =====================================================
+    // RESET
+    // =====================================================
+
+    reset() {
+
+        for (
+            const name
+            of Object.keys(
+                this.targets
+            )
+        ) {
+
+            this.targets[name] =
+                0;
+
+            this.offsets[name] =
+                0;
+        }
+
+
+        this.intensity =
+            0;
+
+        this.previousSpeed =
+            0;
+
+        this.acceleration =
+            0;
+
+        this.hasPreviousSpeed =
+            false;
+
+
+        this.applyPose();
+    }
+
+
+    setGravityFrame(
+        gravityFrame
+    ) {
+
         this.gravityFrame =
-            gravityFrame || null;
+            gravityFrame ||
+            null;
     }
 
-    setGait(gait) {
+
+    setGait(
+        gait
+    ) {
+
         this.gait =
-            gait || null;
+            gait ||
+            null;
     }
+
 
     getState() {
-        return {
-            intensity: this.intensity,
-            acceleration: this.smoothedAcceleration,
 
-            offsets: {
-                ...this.offsets
-            },
+        return {
+
+            intensity:
+                this.intensity,
+
+            acceleration:
+                this.acceleration,
 
             targets: {
                 ...this.targets
+            },
+
+            offsets: {
+                ...this.offsets
             }
         };
     }
 
+
     validate() {
-        const finiteObject = object =>
-            Object.values(object).every(
-                value =>
-                    Number.isFinite(value)
-            );
+
+        const validObject =
+            object =>
+                Object.values(
+                    object
+                ).every(
+                    value =>
+                        Number.isFinite(
+                            value
+                        )
+                );
+
 
         return (
             !!this.skeleton &&
             !!this.bodyState &&
-            finiteObject(this.offsets) &&
-            finiteObject(this.targets) &&
-            Number.isFinite(this.intensity) &&
-            Number.isFinite(this.previousSpeed) &&
+            validObject(
+                this.targets
+            ) &&
+            validObject(
+                this.offsets
+            ) &&
             Number.isFinite(
-                this.smoothedAcceleration
+                this.intensity
             )
         );
     }
