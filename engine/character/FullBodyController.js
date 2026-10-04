@@ -35,7 +35,7 @@ import {
     damp,
     finite,
     shortestAngleDelta
-} from "../MathUtils.js";
+} from "./MathUtils.js";
 
 
 const DEFAULTS = {
