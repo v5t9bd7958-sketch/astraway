@@ -5,6 +5,16 @@
 // Skeleton + IK + Gait + Animation State Machine
 //
 // Character works entirely in world coordinates.
+//
+// Anatomical leg chain:
+// pelvis
+//   └─ thigh → shin → ankle → foot → toe
+//
+// IK controls:
+// thigh → shin → ankle
+//
+// Foot/toe articulation is intentionally kept separate
+// and will be added after the basic leg chain is stable.
 
 import Skeleton from "./Skeleton.js";
 
@@ -21,7 +31,6 @@ import AnimationStateMachine, {
 import {
     clamp,
     dampAngle,
-    distance,
     finite,
     normalize,
     shortestAngleDelta
@@ -260,14 +269,6 @@ export class Character {
                 }));
 
         this.pathIndex = 0;
-
-        /*
-         * The first path point is normally
-         * the character's current position.
-         *
-         * Derive its surface parameter
-         * from the actual character position.
-         */
 
         if (
             this.path.length > 0 &&
@@ -673,7 +674,8 @@ export class Character {
             if (
                 actualStep >
                 0.000001 &&
-                dt > 0.000001
+                dt >
+                0.000001
             ) {
 
                 this.velocity.x =
@@ -961,6 +963,21 @@ export class Character {
                 this.lookAngle
             );
 
+        const spineLower =
+            this.skeleton.getBone(
+                "spineLower"
+            );
+
+        const spineMid =
+            this.skeleton.getBone(
+                "spineMid"
+            );
+
+        const spineUpper =
+            this.skeleton.getBone(
+                "spineUpper"
+            );
+
         const chest =
             this.skeleton.getBone(
                 "chest"
@@ -976,13 +993,52 @@ export class Character {
                 "head"
             );
 
+
+        /*
+         * The new multi-segment spine is deliberately
+         * distributed instead of bending only one torso bone.
+         *
+         * This is still a restrained base pose.
+         * Real dynamic spine motion comes later.
+         */
+
+        if (spineLower) {
+
+            spineLower.localAngle =
+                clamp(
+                    lookOffset * 0.06,
+                    -0.10,
+                    0.10
+                );
+        }
+
+        if (spineMid) {
+
+            spineMid.localAngle =
+                clamp(
+                    lookOffset * 0.08,
+                    -0.12,
+                    0.12
+                );
+        }
+
+        if (spineUpper) {
+
+            spineUpper.localAngle =
+                clamp(
+                    lookOffset * 0.10,
+                    -0.16,
+                    0.16
+                );
+        }
+
         if (chest) {
 
             chest.localAngle =
                 clamp(
-                    lookOffset * 0.22,
-                    -0.35,
-                    0.35
+                    lookOffset * 0.18,
+                    -0.30,
+                    0.30
                 );
         }
 
@@ -990,9 +1046,9 @@ export class Character {
 
             neck.localAngle =
                 clamp(
-                    lookOffset * 0.45,
-                    -0.65,
-                    0.65
+                    lookOffset * 0.40,
+                    -0.60,
+                    0.60
                 );
         }
 
@@ -1000,9 +1056,9 @@ export class Character {
 
             head.localAngle =
                 clamp(
-                    lookOffset * 0.35,
-                    -0.65,
-                    0.65
+                    lookOffset * 0.28,
+                    -0.55,
+                    0.55
                 );
         }
 
@@ -1097,26 +1153,39 @@ export class Character {
             return;
         }
 
-        const leftHip =
+        /*
+         * New anatomical chain:
+         *
+         * thigh → shin → ankle
+         *
+         * The old:
+         *
+         * hip → knee → ankle
+         *
+         * no longer exists.
+         */
+
+        const leftThigh =
             this.skeleton.getBone(
-                "hipL"
+                "thighL"
             );
 
-        const rightHip =
+        const rightThigh =
             this.skeleton.getBone(
-                "hipR"
+                "thighR"
             );
 
         if (
-            !leftHip ||
-            !rightHip
+            !leftThigh ||
+            !rightThigh
         ) {
             return;
         }
 
+
         this.solveLeg(
-            "hipL",
-            "kneeL",
+            "thighL",
+            "shinL",
             "ankleL",
             this.footTargets.left,
             this.makeKneePole(
@@ -1125,9 +1194,10 @@ export class Character {
             "left"
         );
 
+
         this.solveLeg(
-            "hipR",
-            "kneeR",
+            "thighR",
+            "shinR",
             "ankleR",
             this.footTargets.right,
             this.makeKneePole(
@@ -1139,22 +1209,22 @@ export class Character {
 
 
     solveLeg(
-        hipName,
-        kneeName,
+        thighName,
+        shinName,
         ankleName,
         target,
         pole,
         side
     ) {
 
-        const hip =
+        const thigh =
             this.skeleton.getBone(
-                hipName
+                thighName
             );
 
-        const knee =
+        const shin =
             this.skeleton.getBone(
-                kneeName
+                shinName
             );
 
         const ankle =
@@ -1163,98 +1233,105 @@ export class Character {
             );
 
         if (
-            !hip ||
-            !knee ||
+            !thigh ||
+            !shin ||
             !ankle ||
             !target
         ) {
             return;
         }
 
+
         /*
-         * IMPORTANT:
+         * The Skeleton is now the authoritative source
+         * of anatomical dimensions.
          *
-         * Measure the actual current chain
-         * before changing its angles.
-         *
-         * We deliberately do NOT translate
-         * the ankle after IK.
-         *
-         * The skeleton chain has fixed local
-         * joint offsets, so changing hip/knee
-         * angles is sufficient to place the
-         * ankle at the solved position.
+         * Do not duplicate leg lengths here.
          */
-
-        const hipPosition =
-            hip.getWorldPosition();
-
-        const kneePosition =
-            knee.getWorldPosition();
-
-        const anklePosition =
-            ankle.getWorldPosition();
 
         const upperLength =
             Math.max(
                 1,
-                distance(
-                    hipPosition,
-                    kneePosition
+                this.skeleton.getAnatomicalLength(
+                    thighName
                 )
             );
 
         const lowerLength =
             Math.max(
                 1,
-                distance(
-                    kneePosition,
-                    anklePosition
+                this.skeleton.getAnatomicalLength(
+                    shinName
                 )
             );
 
+
+        const thighPosition =
+            thigh.getWorldPosition();
+
+        const anklePosition =
+            ankle.getWorldPosition();
+
+
         const result =
             solveTwoBoneIK(
-                hipPosition,
+
+                thighPosition,
+
                 target,
+
                 upperLength,
+
                 lowerLength,
+
                 pole,
+
                 {
                     minReach: 1
                 }
             );
 
+
+        if (!result) {
+            return;
+        }
+
+
         /*
-         * Apply only angular changes.
+         * Apply solved world rotations.
+         *
+         * No joint translation.
+         *
+         * Therefore:
+         *
+         * thigh length remains fixed
+         * shin length remains fixed
+         * ankle remains anatomically attached
          */
 
         this.skeleton.setWorldBoneAngle(
-            hipName,
+            thighName,
             result.hipAngle
         );
 
         this.skeleton.setWorldBoneAngle(
-            kneeName,
+            shinName,
             result.kneeAngle
         );
 
-        /*
-         * Rebuild FK.
-         *
-         * The ankle now follows the fixed
-         * knee -> ankle local offset.
-         */
 
         this.skeleton.updateWorldTransforms();
 
+
         /*
-         * Never call setWorldBonePosition()
-         * on ankle here.
+         * Foot articulation is deliberately not solved here.
          *
-         * That would mutate the local joint
-         * offset and therefore mutate the
-         * physical lower-leg length.
+         * The chain is:
+         *
+         * ankle → foot → toe
+         *
+         * and will receive its own ground-contact /
+         * foot-roll logic later.
          */
 
         const foot =
@@ -1530,10 +1607,10 @@ export class Character {
 
             valid:
                 skeletonValid.valid &&
-                finite(
+                Number.isFinite(
                     this.position.x
                 ) &&
-                finite(
+                Number.isFinite(
                     this.position.y
                 ),
 
