@@ -67,44 +67,35 @@ export class Game {
             return;
         }
         this.world.initialize();
+
         /*
-         * Character Lab работает вокруг координат 0,0.
-         *
-         * Старый мир был:
-         *
-         * 0 ... 1600
-         * 0 ... 2400
-         *
-         * Теперь центр мира:
-         *
-         * -800 ... +800
-         * -1200 ... +1200
-         *
-         * Поэтому персонаж в (0,0) находится
-         * прямо в центре камеры.
+         * Bounds come from Geometry-derived World
+         * extents, not hard-coded legacy sizes.
          */
-        const worldWidth =
-            Number.isFinite(
-                this.world.width
-            )
-                ? this.world.width
-                : 1600;
-        const worldHeight =
-            Number.isFinite(
-                this.world.height
-            )
-                ? this.world.height
-                : 2400;
+        const minX =
+            Number.isFinite(this.world.minX)
+                ? this.world.minX
+                : -226.5;
+        const maxX =
+            Number.isFinite(this.world.maxX)
+                ? this.world.maxX
+                : 226.5;
+        const minY =
+            Number.isFinite(this.world.minY)
+                ? this.world.minY
+                : -500;
+        const maxY =
+            Number.isFinite(this.world.maxY)
+                ? this.world.maxY
+                : 40;
+
         this.camera.setWorldBounds({
-            minX:
-                -worldWidth / 2,
-            maxX:
-                worldWidth / 2,
-            minY:
-                -worldHeight / 2,
-            maxY:
-                worldHeight / 2
+            minX,
+            maxX,
+            minY,
+            maxY
         });
+
         this.renderer.setWorld(
             this.world
         );
@@ -113,17 +104,16 @@ export class Game {
             this.renderer.width,
             this.renderer.height
         );
+
         /*
-         * Сначала получаем реальную позицию
-         * персонажа.
+         * Fit Character Lab into the current viewport
+         * so portrait 9:16 shows the full test geometry.
          */
+        this.fitCameraToLab();
+
         const startTarget =
             this.world.getCameraTarget();
-        /*
-         * Камера сразу смотрит на персонажа.
-         *
-         * Не ждём плавного follow.
-         */
+
         this.camera.setPosition(
             startTarget.x,
             startTarget.y
@@ -131,11 +121,7 @@ export class Game {
         this.camera.snapTo(
             startTarget
         );
-        /*
-         * Никакого background loader.
-         * Никакой навигации.
-         * Никаких изображений.
-         */
+
         this.started = true;
         if (
             typeof this.onReady ===
@@ -143,6 +129,58 @@ export class Game {
         ) {
             this.onReady(this);
         }
+    }
+
+    fitCameraToLab() {
+        const viewW =
+            this.camera.viewportW || 1;
+        const viewH =
+            this.camera.viewportH || 1;
+
+        const worldW =
+            Math.max(
+                1,
+                this.camera.worldWidth
+            );
+        const worldH =
+            Math.max(
+                1,
+                this.camera.worldHeight
+            );
+
+        /*
+         * Portrait: fit full lab height.
+         * Landscape / wide: keep a readable
+         * character scale instead of shrinking
+         * the whole scene into a thin strip.
+         */
+        const isPortrait =
+            viewH >= viewW * 0.9;
+
+        let zoom;
+
+        if (isPortrait) {
+            const margin = 0.88;
+            zoom =
+                (viewH * margin) / worldH;
+        } else {
+            /*
+             * ~1 world unit ≈ 1 CSS px at zoom 1.
+             * Character is ~80–100 units tall;
+             * 1.1–1.4 is a good lab reading scale.
+             */
+            zoom = Math.min(
+                1.35,
+                (viewH * 0.55) / 100
+            );
+        }
+
+        zoom = Math.max(
+            0.35,
+            Math.min(zoom, 2.5)
+        );
+
+        this.camera.setZoom(zoom);
     }
     // =====================================================
     // START
@@ -203,6 +241,62 @@ export class Game {
             this.onStop(this);
         }
     }
+
+    // =====================================================
+    // RESTART
+    // =====================================================
+    restart() {
+        this.stop();
+
+        /*
+         * Rebuild a clean Character Lab world.
+         * No navigation / routes / old tree state.
+         */
+        this.world = new World();
+        this.world.initialize();
+
+        this.renderer.setWorld(
+            this.world
+        );
+
+        const minX =
+            Number.isFinite(this.world.minX)
+                ? this.world.minX
+                : -226.5;
+        const maxX =
+            Number.isFinite(this.world.maxX)
+                ? this.world.maxX
+                : 226.5;
+        const minY =
+            Number.isFinite(this.world.minY)
+                ? this.world.minY
+                : -500;
+        const maxY =
+            Number.isFinite(this.world.maxY)
+                ? this.world.maxY
+                : 40;
+
+        this.camera.setWorldBounds({
+            minX,
+            maxX,
+            minY,
+            maxY
+        });
+
+        this.renderer.resize();
+        this.camera.setViewport(
+            this.renderer.width,
+            this.renderer.height
+        );
+        this.fitCameraToLab();
+
+        const target =
+            this.world.getCameraTarget();
+        this.camera.snapTo(target);
+
+        this.start();
+    }
+
     // =====================================================
     // LOOP
     // =====================================================
@@ -274,10 +368,7 @@ export class Game {
             this.renderer.width,
             this.renderer.height
         );
-        /*
-         * После resize снова удерживаем
-         * персонажа в центре.
-         */
+        this.fitCameraToLab();
         if (this.world) {
             const target =
                 this.world.getCameraTarget();
