@@ -7,6 +7,7 @@
 // ├─ Skeleton            = anatomy / hierarchy / rest pose
 // ├─ Gait                = locomotion / foot targets
 // ├─ BodyState           = COM / contacts / balance
+// ├─ SupportConstraint   = support reach / progression permission
 // ├─ FullBodyController  = upper-body procedural pose
 // ├─ IK                  = mathematical leg solving
 // └─ Animation           = state machine
@@ -25,6 +26,7 @@
 // - bone lengths
 // - upper-body procedural offsets (FullBodyController)
 // - COM / balance math (BodyState)
+// - support constraint math (SupportConstraint)
 // - rendering
 
 import Skeleton from "./Skeleton.js";
@@ -37,6 +39,8 @@ import Gait from "./Gait.js";
 
 import BodyState from "./BodyState.js";
 
+import SupportConstraint from "./SupportConstraint.js";
+
 import FullBodyController from "./FullBodyController.js";
 
 import AnimationStateMachine, {
@@ -44,6 +48,7 @@ import AnimationStateMachine, {
 } from "./AnimationStateMachine.js";
 
 import {
+    clamp01,
     dampAngle,
     finite,
     normalize
@@ -191,6 +196,28 @@ export class Character {
         this.bodyState =
             new BodyState(
                 this.skeleton
+            );
+
+
+        /*
+         * SupportConstraint owns:
+         * - planted-leg reach
+         * - progression permission
+         * - step demand
+         *
+         * It does NOT move Character.
+         * It does NOT move Skeleton.
+         * It does NOT start steps.
+         */
+
+        this.supportConstraint =
+            new SupportConstraint(
+                this.skeleton,
+                this.gait,
+                {
+                    reserve: 0.05,
+                    softStart: 0.85
+                }
             );
 
 
@@ -364,6 +391,7 @@ export class Character {
 
         this.fullBody.reset();
         this.bodyState.reset();
+        this.supportConstraint.reset();
 
 
         /*
@@ -608,6 +636,14 @@ export class Character {
             surface,
             this.currentSurfaceT
         );
+
+
+        /*
+         * Surface transition invalidates the previous
+         * support constraint state.
+         */
+
+        this.supportConstraint.reset();
     }
 
 
@@ -668,8 +704,25 @@ export class Character {
         // MOVEMENT
         // -------------------------------------------------
 
+        /*
+         * Use the permission calculated on the previous
+         * frame.
+         *
+         * This avoids a circular dependency:
+         *
+         * movement → support → movement
+         *
+         * Current support is evaluated later in this frame
+         * and becomes movement permission for the next frame.
+         */
+
+        const progressionPermission =
+            this.supportConstraint.getPermission();
+
+
         this.updateMovement(
-            safeDt
+            safeDt,
+            progressionPermission
         );
 
 
@@ -759,16 +812,19 @@ export class Character {
         const rightPlanted =
             gaitResult.rightPlanted;
 
+
         this.bodyState.setFootContact(
             "left",
             leftPlanted,
             gaitResult.left
         );
 
+
         this.bodyState.setFootPlanted(
             "left",
             leftPlanted
         );
+
 
         this.bodyState.setFootContact(
             "right",
@@ -776,24 +832,36 @@ export class Character {
             gaitResult.right
         );
 
+
         this.bodyState.setFootPlanted(
             "right",
             rightPlanted
         );
 
+
         let leftWeight = 0;
         let rightWeight = 0;
 
-        if (leftPlanted && rightPlanted) {
+
+        if (
+            leftPlanted &&
+            rightPlanted
+        ) {
+
             leftWeight = 0.5;
             rightWeight = 0.5;
+
         } else if (leftPlanted) {
+
             leftWeight = 1.0;
             rightWeight = 0.0;
+
         } else if (rightPlanted) {
+
             leftWeight = 0.0;
             rightWeight = 1.0;
         }
+
 
         this.bodyState.setFootWeight(
             leftWeight,
@@ -811,6 +879,29 @@ export class Character {
          */
 
         this.bodyState.update();
+
+
+        // -------------------------------------------------
+        // SUPPORT CONSTRAINT
+        // -------------------------------------------------
+
+        /*
+         * Evaluate support after the current body/gait
+         * state exists.
+         *
+         * The permission affects the NEXT movement frame.
+         *
+         * Step demand is passed to Gait immediately,
+         * therefore it can affect the NEXT Gait update.
+         */
+
+        const supportState =
+            this.supportConstraint.update();
+
+
+        this.gait.setStepDemand(
+            supportState.stepDemand
+        );
 
 
         // -------------------------------------------------
@@ -885,7 +976,10 @@ export class Character {
     // MOVEMENT
     // =====================================================
 
-    updateMovement(dt) {
+    updateMovement(
+        dt,
+        progressionPermission = 1
+    ) {
 
         if (
             !this.isMoving ||
@@ -921,8 +1015,23 @@ export class Character {
             ];
 
 
+        /*
+         * Requested movement is scaled by the support
+         * permission.
+         *
+         * SupportConstraint remains the calculator.
+         * Character remains the movement owner.
+         */
+
         const stepDistance =
-            this.speed * dt;
+            this.speed *
+            dt *
+            clamp01(
+                finite(
+                    progressionPermission,
+                    1
+                )
+            );
 
 
         // -------------------------------------------------
@@ -1771,6 +1880,8 @@ export class Character {
          */
 
         this.bodyState.reset();
+
+        this.supportConstraint.reset();
 
         this.fullBody.reset();
 
