@@ -1,3 +1,8 @@
+import {
+    CHARACTER_LAB_IMAGE
+} from "../../character-lab/geometry-source.js";
+
+
 export class Renderer {
 
     constructor(canvas) {
@@ -33,6 +38,45 @@ export class Renderer {
         this.character = null;
 
         this.debug = false;
+
+        /*
+         * CHARACTER LAB BACKGROUND
+         *
+         * Изображение является только визуальным слоем.
+         * Геометрия из Geometry.js не рисует мир,
+         * а используется логикой персонажа.
+         */
+
+        this.backgroundImage =
+            new Image();
+
+        this.backgroundImageLoaded =
+            false;
+
+        this.backgroundImage.onerror =
+            () => {
+
+                this.backgroundImageLoaded =
+                    false;
+
+                this.render();
+            };
+
+        this.backgroundImage.onload =
+            () => {
+
+                this.backgroundImageLoaded =
+                    true;
+
+                this.render();
+            };
+
+        this.backgroundImage.src =
+            new URL(
+                "../../character-lab/IMG_2597.jpeg",
+                import.meta.url
+            ).href;
+
 
         this._resizeHandler =
             () => this.resize();
@@ -288,6 +332,128 @@ export class Renderer {
     }
 
 
+    /*
+     * Рисует исходную фотографию Character Lab.
+     *
+     * ВАЖНО:
+     *
+     * Геометрия фотографии задана в пикселях.
+     * Geometry.pixelToWorld() переводит эти координаты
+     * в ту же мировую систему, которую использует персонаж.
+     *
+     * Поэтому изображение и collision-геометрия
+     * должны совпадать независимо от масштаба камеры.
+     */
+
+    drawBackground() {
+
+        if (
+            !this.backgroundImageLoaded ||
+            !this.world ||
+            !this.camera
+        ) {
+            return;
+        }
+
+        const geometry =
+            this.world.getGeometry?.();
+
+        if (!geometry) {
+            return;
+        }
+
+        if (
+            typeof geometry.pixelToWorld !==
+            "function"
+        ) {
+            return;
+        }
+
+        const imageWidth =
+            CHARACTER_LAB_IMAGE.width;
+
+        const imageHeight =
+            CHARACTER_LAB_IMAGE.height;
+
+
+        const topLeft =
+            geometry.pixelToWorld({
+                x: 0,
+                y: 0
+            });
+
+        const bottomRight =
+            geometry.pixelToWorld({
+                x: imageWidth,
+                y: imageHeight
+            });
+
+
+        const screenTopLeft =
+            this.worldToScreen(
+                topLeft.x,
+                topLeft.y
+            );
+
+        const screenBottomRight =
+            this.worldToScreen(
+                bottomRight.x,
+                bottomRight.y
+            );
+
+
+        const width =
+            screenBottomRight.x -
+            screenTopLeft.x;
+
+        const height =
+            screenBottomRight.y -
+            screenTopLeft.y;
+
+
+        if (
+            !Number.isFinite(
+                screenTopLeft.x
+            ) ||
+            !Number.isFinite(
+                screenTopLeft.y
+            ) ||
+            !Number.isFinite(width) ||
+            !Number.isFinite(height) ||
+            width === 0 ||
+            height === 0
+        ) {
+            return;
+        }
+
+
+        const ctx =
+            this.ctx;
+
+        ctx.save();
+
+        ctx.imageSmoothingEnabled =
+            true;
+
+        ctx.drawImage(
+            this.backgroundImage,
+            screenTopLeft.x,
+            screenTopLeft.y,
+            width,
+            height
+        );
+
+        ctx.restore();
+    }
+
+
+    /*
+     * Технический debug-overlay.
+     *
+     * Эти линии НЕ являются игровым фоном.
+     * Они показываются только при debug=true.
+     */
+
     drawGeometry() {
 
         const geometry =
@@ -307,6 +473,7 @@ export class Renderer {
 
         ctx.lineJoin =
             "round";
+
 
         /*
          * GROUND
@@ -430,7 +597,28 @@ export class Renderer {
             return;
         }
 
-        this.drawGeometry();
+
+        /*
+         * 1. Реальный фон Character Lab
+         */
+
+        this.drawBackground();
+
+
+        /*
+         * 2. Техническая геометрия —
+         *    только в debug-режиме.
+         */
+
+        if (this.debug) {
+
+            this.drawGeometry();
+        }
+
+
+        /*
+         * 3. Персонаж поверх фона.
+         */
 
         this.renderCharacter();
     }
@@ -640,6 +828,7 @@ export class Renderer {
                 skeleton.bones.values()
             );
 
+
         for (
             const bone
             of bones
@@ -649,6 +838,7 @@ export class Renderer {
                 bone
             );
         }
+
 
         for (
             const bone
@@ -668,6 +858,21 @@ export class Renderer {
             "resize",
             this._resizeHandler
         );
+
+        if (this.backgroundImage) {
+
+            this.backgroundImage.onload =
+                null;
+
+            this.backgroundImage.onerror =
+                null;
+
+            this.backgroundImage.src =
+                "";
+        }
+
+        this.backgroundImage =
+            null;
 
         this.camera = null;
         this.world = null;
