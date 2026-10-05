@@ -1,4 +1,4 @@
-import { clamp01, finite, distance } from "../core/MathUtils.js";
+import { clamp01, finite, distance } from "./MathUtils.js";
 
 export default class SupportConstraint {
   constructor(skeleton, gait, options = {}) {
@@ -60,9 +60,11 @@ export default class SupportConstraint {
     );
 
     this.stepDemand = clamp01(
-      Math.max(...measurements.map(
-        (measurement) => measurement.stepDemand
-      ))
+      Math.max(
+        ...measurements.map(
+          (measurement) => measurement.stepDemand
+        )
+      )
     );
 
     this.state = {
@@ -297,8 +299,9 @@ export default class SupportConstraint {
         : "thighR";
 
     const bone =
-      this.skeleton.bones &&
-      this.skeleton.bones[boneName];
+      typeof this.skeleton.getBone === "function"
+        ? this.skeleton.getBone(boneName)
+        : null;
 
     if (!bone) {
       return null;
@@ -340,8 +343,9 @@ export default class SupportConstraint {
 
     const bone =
       this.skeleton &&
-      this.skeleton.bones &&
-      this.skeleton.bones[name];
+      typeof this.skeleton.getBone === "function"
+        ? this.skeleton.getBone(name)
+        : null;
 
     if (
       bone &&
