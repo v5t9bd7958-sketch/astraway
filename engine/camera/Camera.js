@@ -347,45 +347,54 @@ export class Camera {
 
     clampX(value) {
 
+        if (!Number.isFinite(value)) {
+            return (
+                this.minX + this.maxX
+            ) / 2;
+        }
+
         const halfViewport =
             this.viewportW > 0
                 ? this.viewportW /
                   (2 * this.zoom)
                 : 0;
 
-        const span =
-            Math.min(
-                halfViewport,
-                this.worldWidth / 2
-            );
+        /*
+         * When the lab is narrower than the
+         * viewport, do not lock the camera to
+         * the geometric centre — keep free
+         * tracking of the character.
+         */
+        if (halfViewport >= this.worldWidth / 2) {
+            return value;
+        }
 
         const min =
-            this.minX + span;
+            this.minX + halfViewport;
 
         const max =
-            this.maxX - span;
+            this.maxX - halfViewport;
 
         if (min > max) {
-
             return (
-                this.minX +
-                this.maxX
+                this.minX + this.maxX
             ) / 2;
         }
 
         return Math.max(
             min,
-            Math.min(
-                max,
-                Number.isFinite(value)
-                    ? value
-                    : min
-            )
+            Math.min(max, value)
         );
     }
 
 
     clampY(value) {
+
+        if (!Number.isFinite(value)) {
+            return (
+                this.minY + this.maxY
+            ) / 2;
+        }
 
         const halfViewport =
             this.viewportH > 0
@@ -393,34 +402,25 @@ export class Camera {
                   (2 * this.zoom)
                 : 0;
 
-        const span =
-            Math.min(
-                halfViewport,
-                this.worldHeight / 2
-            );
+        if (halfViewport >= this.worldHeight / 2) {
+            return value;
+        }
 
         const min =
-            this.minY + span;
+            this.minY + halfViewport;
 
         const max =
-            this.maxY - span;
+            this.maxY - halfViewport;
 
         if (min > max) {
-
             return (
-                this.minY +
-                this.maxY
+                this.minY + this.maxY
             ) / 2;
         }
 
         return Math.max(
             min,
-            Math.min(
-                max,
-                Number.isFinite(value)
-                    ? value
-                    : min
-            )
+            Math.min(max, value)
         );
     }
 }
