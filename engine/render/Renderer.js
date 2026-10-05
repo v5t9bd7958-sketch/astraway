@@ -1,42 +1,22 @@
-/**
- * ASTRAWAY — Character Lab Renderer
- *
- * Никакого старого мира.
- * Никакого фона.
- * Никакой навигации.
- * Никаких маршрутов.
- * Никаких фотографий.
- *
- * Renderer рисует только:
- *
- * Canvas
- *   ↓
- * Character
- *   ↓
- * Skeleton
- *
- * Вся логика движения и позы остаётся
- * внутри Character / Skeleton / Gait / IK / FBC.
- */
-
 export class Renderer {
 
     constructor(canvas) {
 
         if (!canvas) {
             throw new Error(
-                'Renderer: Canvas не передан.'
+                "Renderer: Canvas не передан."
             );
         }
 
-        this.canvas = canvas;
+        this.canvas =
+            canvas;
 
         this.ctx =
-            canvas.getContext('2d');
+            canvas.getContext("2d");
 
         if (!this.ctx) {
             throw new Error(
-                'Renderer: Canvas 2D context недоступен.'
+                "Renderer: Canvas 2D context недоступен."
             );
         }
 
@@ -55,12 +35,10 @@ export class Renderer {
         this.debug = false;
 
         this._resizeHandler =
-            () => {
-                this.resize();
-            };
+            () => this.resize();
 
         window.addEventListener(
-            'resize',
+            "resize",
             this._resizeHandler,
             { passive: true }
         );
@@ -69,14 +47,11 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // RESIZE
-    // =====================================================
-
     resize() {
 
         const rect =
-            this.canvas.getBoundingClientRect();
+            this.canvas
+                .getBoundingClientRect();
 
         const width =
             Number.isFinite(rect.width) &&
@@ -90,11 +65,17 @@ export class Renderer {
                 ? rect.height
                 : window.innerHeight;
 
-        this.width = width;
-        this.height = height;
+        this.width =
+            width;
 
-        this.viewportW = width;
-        this.viewportH = height;
+        this.height =
+            height;
+
+        this.viewportW =
+            width;
+
+        this.viewportH =
+            height;
 
         this.devicePixelRatio =
             Math.max(
@@ -142,17 +123,14 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // CAMERA
-    // =====================================================
-
     setCamera(camera) {
 
-        this.camera = camera;
+        this.camera =
+            camera;
 
-        if (this.camera) {
+        if (camera) {
 
-            this.camera.setViewport(
+            camera.setViewport(
                 this.width,
                 this.height
             );
@@ -160,34 +138,18 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // WORLD
-    // =====================================================
-
     setWorld(world) {
 
-        this.world = world;
+        this.world =
+            world;
 
         this.character =
-            world &&
-            typeof world.getCharacter === 'function'
-                ? world.getCharacter()
-                : null;
+            world?.getCharacter?.() ??
+            null;
     }
 
 
-    // =====================================================
-    // DEBUG
-    // =====================================================
-
     setDebug(enabled) {
-
-        /*
-         * Старого debug-world больше нет.
-         *
-         * Флаг оставляем совместимым
-         * с Game/main.js.
-         */
 
         this.debug =
             Boolean(enabled);
@@ -212,13 +174,10 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // CLEAR
-    // =====================================================
-
     clear() {
 
-        const ctx = this.ctx;
+        const ctx =
+            this.ctx;
 
         ctx.setTransform(
             this.devicePixelRatio,
@@ -236,12 +195,8 @@ export class Renderer {
             this.viewportH
         );
 
-        /*
-         * Чистый нейтральный фон.
-         *
-         * Это НЕ изображение и НЕ игровой фон.
-         */
-        ctx.fillStyle = '#050505';
+        ctx.fillStyle =
+            "#050505";
 
         ctx.fillRect(
             0,
@@ -252,9 +207,209 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // MAIN RENDER
-    // =====================================================
+    worldToScreen(x, y) {
+
+        if (
+            this.camera &&
+            typeof this.camera.worldToScreen ===
+                "function"
+        ) {
+
+            return this.camera.worldToScreen(
+                x,
+                y
+            );
+        }
+
+        return {
+
+            x:
+                this.viewportW * 0.5 +
+                x,
+
+            y:
+                this.viewportH * 0.5 +
+                y
+        };
+    }
+
+
+    drawPolyline(
+        points,
+        close = false
+    ) {
+
+        if (
+            !points ||
+            points.length === 0
+        ) {
+            return;
+        }
+
+        const ctx =
+            this.ctx;
+
+        ctx.beginPath();
+
+        points.forEach(
+            (
+                point,
+                index
+            ) => {
+
+                const screen =
+                    this.worldToScreen(
+                        point.x,
+                        point.y
+                    );
+
+                if (index === 0) {
+
+                    ctx.moveTo(
+                        screen.x,
+                        screen.y
+                    );
+
+                } else {
+
+                    ctx.lineTo(
+                        screen.x,
+                        screen.y
+                    );
+                }
+            }
+        );
+
+        if (close) {
+            ctx.closePath();
+        }
+
+        ctx.stroke();
+    }
+
+
+    drawGeometry() {
+
+        const geometry =
+            this.world?.getGeometry?.();
+
+        if (!geometry) {
+            return;
+        }
+
+        const ctx =
+            this.ctx;
+
+        ctx.save();
+
+        ctx.lineCap =
+            "round";
+
+        ctx.lineJoin =
+            "round";
+
+        /*
+         * GROUND
+         */
+
+        ctx.lineWidth =
+            3;
+
+        ctx.strokeStyle =
+            "#7f8cff";
+
+        this.drawPolyline(
+            geometry
+                .getGround()
+                .points
+        );
+
+
+        /*
+         * HILL
+         */
+
+        ctx.strokeStyle =
+            "#5f6d80";
+
+        this.drawPolyline(
+            geometry
+                .getHill()
+                .points
+        );
+
+
+        /*
+         * STEPS
+         */
+
+        ctx.strokeStyle =
+            "#b7b7b7";
+
+        for (
+            const step
+            of geometry.getSteps()
+        ) {
+
+            this.drawPolyline(
+                step.points,
+                true
+            );
+        }
+
+
+        /*
+         * LADDER
+         */
+
+        const ladder =
+            geometry.getLadder();
+
+        ctx.strokeStyle =
+            "#c8a36a";
+
+        this.drawPolyline(
+            ladder.leftRail
+        );
+
+        this.drawPolyline(
+            ladder.rightRail
+        );
+
+
+        /*
+         * BEAM
+         */
+
+        const beam =
+            geometry.getBeam();
+
+        ctx.strokeStyle =
+            "#d6b078";
+
+        this.drawPolyline(
+            beam.points,
+            true
+        );
+
+
+        /*
+         * ROPE
+         */
+
+        const rope =
+            geometry.getRope();
+
+        ctx.strokeStyle =
+            "#d8d8d8";
+
+        this.drawPolyline(
+            rope.points
+        );
+
+        ctx.restore();
+    }
+
 
     render(
         world = null,
@@ -275,23 +430,11 @@ export class Renderer {
             return;
         }
 
-        if (
-            !this.character &&
-            this.world &&
-            typeof this.world.getCharacter === 'function'
-        ) {
-
-            this.character =
-                this.world.getCharacter();
-        }
+        this.drawGeometry();
 
         this.renderCharacter();
     }
 
-
-    // =====================================================
-    // CHARACTER
-    // =====================================================
 
     renderCharacter() {
 
@@ -311,54 +454,14 @@ export class Renderer {
         if (
             !skeleton.bones ||
             typeof skeleton.bones.values !==
-                'function'
+                "function"
         ) {
             return;
         }
 
-        const ctx = this.ctx;
+        const ctx =
+            this.ctx;
 
-        /*
-         * -------------------------------------------------
-         * World → Screen
-         * -------------------------------------------------
-         */
-
-        const worldToScreen =
-            (
-                x,
-                y
-            ) => {
-
-                if (
-                    this.camera &&
-                    typeof this.camera.worldToScreen ===
-                        'function'
-                ) {
-
-                    return this.camera.worldToScreen(
-                        x,
-                        y
-                    );
-                }
-
-                return {
-                    x:
-                        this.viewportW * 0.5 +
-                        x,
-
-                    y:
-                        this.viewportH * 0.5 +
-                        y
-                };
-            };
-
-
-        /*
-         * -------------------------------------------------
-         * Bone
-         * -------------------------------------------------
-         */
 
         const drawBone =
             bone => {
@@ -385,7 +488,7 @@ export class Renderer {
                 }
 
                 const start =
-                    worldToScreen(
+                    this.worldToScreen(
                         bone.worldX,
                         bone.worldY
                     );
@@ -407,55 +510,48 @@ export class Renderer {
                     );
 
                 const end =
-                    worldToScreen(
-
+                    this.worldToScreen(
                         bone.worldX +
-                        Math.cos(
-                            bone.worldAngle
-                        ) *
-                        length,
+                            Math.cos(
+                                bone.worldAngle
+                            ) *
+                            length,
 
                         bone.worldY +
-                        Math.sin(
-                            bone.worldAngle
-                        ) *
-                        length
+                            Math.sin(
+                                bone.worldAngle
+                            ) *
+                            length
                     );
 
+                let width =
+                    5;
 
-                let width = 5;
+                if (
+                    bone.role === "pelvis" ||
+                    bone.role === "chest" ||
+                    bone.role === "spine"
+                ) {
 
-                switch (bone.role) {
+                    width = 7;
 
-                    case 'pelvis':
-                    case 'chest':
-                    case 'spine':
-                        width = 7;
-                        break;
+                } else if (
+                    bone.role === "head"
+                ) {
 
-                    case 'head':
-                        width = 8;
-                        break;
-
-                    case 'limb':
-                        width = 5;
-                        break;
-
-                    default:
-                        width = 4;
+                    width = 8;
                 }
-
 
                 ctx.save();
 
                 ctx.lineCap =
-                    'round';
+                    "round";
 
                 ctx.lineJoin =
-                    'round';
+                    "round";
 
                 ctx.strokeStyle =
-                    '#d8d8d8';
+                    "#d8d8d8";
 
                 ctx.lineWidth =
                     width;
@@ -478,12 +574,6 @@ export class Renderer {
             };
 
 
-        /*
-         * -------------------------------------------------
-         * Joint
-         * -------------------------------------------------
-         */
-
         const drawJoint =
             bone => {
 
@@ -503,29 +593,31 @@ export class Renderer {
                 }
 
                 const point =
-                    worldToScreen(
+                    this.worldToScreen(
                         bone.worldX,
                         bone.worldY
                     );
 
-                let radius = 4;
+                let radius =
+                    4;
 
                 if (
-                    bone.role === 'head'
+                    bone.role === "head"
                 ) {
+
                     radius = 7;
-                }
 
-                if (
-                    bone.role === 'pelvis'
+                } else if (
+                    bone.role === "pelvis"
                 ) {
+
                     radius = 6;
                 }
 
                 ctx.save();
 
                 ctx.fillStyle =
-                    '#f0f0f0';
+                    "#f0f0f0";
 
                 ctx.beginPath();
 
@@ -543,17 +635,6 @@ export class Renderer {
             };
 
 
-        /*
-         * -------------------------------------------------
-         * Все кости.
-         *
-         * Renderer ничего не знает
-         * о конкретной анатомии.
-         *
-         * Skeleton сам является источником истины.
-         * -------------------------------------------------
-         */
-
         const bones =
             Array.from(
                 skeleton.bones.values()
@@ -569,12 +650,6 @@ export class Renderer {
             );
         }
 
-
-        /*
-         * Сначала кости,
-         * затем суставы.
-         */
-
         for (
             const bone
             of bones
@@ -587,14 +662,10 @@ export class Renderer {
     }
 
 
-    // =====================================================
-    // DESTROY
-    // =====================================================
-
     destroy() {
 
         window.removeEventListener(
-            'resize',
+            "resize",
             this._resizeHandler
         );
 
