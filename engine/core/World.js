@@ -1,46 +1,199 @@
-import { Character } from '../character/Character.js';
-import Surface from '../world/Surface.js';
+import { Character } from "../character/Character.js";
+import Geometry from "./Geometry.js";
+
+
+/*
+ * Минимальный compatibility adapter.
+ *
+ * Это НЕ старый Surface.js.
+ *
+ * Он существует только потому, что текущий
+ * Character ещё ожидает surface.getPoint()
+ * и surface.getFrame().
+ *
+ * Позже этот контракт будет заменён
+ * Contact Provider / Perception.
+ */
+class GroundSurface {
+
+    constructor(points) {
+
+        this.id =
+            "character_lab_ground";
+
+        this.name =
+            "Character Lab Ground";
+
+        this.points =
+            points;
+    }
+
+    getPoint(t = 0.5) {
+
+        const a =
+            this.points[0];
+
+        const b =
+            this.points[1];
+
+        const clamped =
+            Math.max(
+                0,
+                Math.min(
+                    1,
+                    t
+                )
+            );
+
+        return {
+            x:
+                a.x +
+                (b.x - a.x) *
+                clamped,
+
+            y:
+                a.y +
+                (b.y - a.y) *
+                clamped
+        };
+    }
+
+    getFrame(t = 0.5) {
+
+        const position =
+            this.getPoint(t);
+
+        const a =
+            this.points[0];
+
+        const b =
+            this.points[1];
+
+        const dx =
+            b.x - a.x;
+
+        const dy =
+            b.y - a.y;
+
+        const length =
+            Math.hypot(
+                dx,
+                dy
+            ) || 1;
+
+        const tangent = {
+            x:
+                dx / length,
+
+            y:
+                dy / length
+        };
+
+        const normal = {
+            x:
+                -tangent.y,
+
+            y:
+                tangent.x
+        };
+
+        return {
+            position,
+
+            tangent,
+
+            normal,
+
+            angle:
+                Math.atan2(
+                    tangent.y,
+                    tangent.x
+                ),
+
+            t:
+                Math.max(
+                    0,
+                    Math.min(
+                        1,
+                        t
+                    )
+                )
+        };
+    }
+
+    validate() {
+
+        return (
+            this.points.length === 2 &&
+            this.points.every(
+                point =>
+                    Number.isFinite(
+                        point.x
+                    ) &&
+                    Number.isFinite(
+                        point.y
+                    )
+            )
+        );
+    }
+
+    snapshot() {
+
+        return {
+            id:
+                this.id,
+
+            name:
+                this.name,
+
+            points:
+                this.points.map(
+                    point => ({
+                        ...point
+                    })
+                )
+        };
+    }
+}
 
 
 export class World {
 
     constructor(options = {}) {
 
-        /*
-         * Размер пока условный.
-         * Это больше не размер старой картинки дерева.
-         */
+        this.geometry =
+            new Geometry();
 
-        this.width =
-            options.width ??
-            1600;
-
-        this.height =
-            options.height ??
-            2400;
-
+        this.ground =
+            new GroundSurface(
+                this.geometry
+                    .getGround()
+                    .points
+            );
 
         /*
-         * Только одна нейтральная
-         * лабораторная поверхность.
-         *
-         * Никаких старых маршрутов.
+         * World bounds intentionally cover
+         * the whole current Character Lab,
+         * including the beam above the character.
          */
+        this.width = 413;
+
+        this.height = 920;
 
         this.surfaces =
-            new Map();
-
+            new Map([
+                [
+                    this.ground.id,
+                    this.ground
+                ]
+            ]);
 
         this.character =
             new Character({
 
-                x:
-                    options.characterX ??
-                    0,
+                x: 0,
 
-                y:
-                    options.characterY ??
-                    0,
+                y: 0,
 
                 speed:
                     options.characterSpeed ??
@@ -55,6 +208,9 @@ export class World {
                     10
             });
 
+        this.startT =
+            options.startT ??
+            0.5;
 
         this.started =
             false;
@@ -63,10 +219,6 @@ export class World {
             false;
     }
 
-
-    // =====================================================
-    // INITIALIZE
-    // =====================================================
 
     initialize() {
 
@@ -74,115 +226,21 @@ export class World {
             return;
         }
 
+        const startPoint =
+            this.ground.getPoint(
+                this.startT
+            );
 
-        this.createCharacterLab();
-
-
-        this.initializeCharacter();
-
+        this.character.initialize(
+            startPoint,
+            this.ground,
+            this.startT
+        );
 
         this.initialized =
             true;
     }
 
-
-    // =====================================================
-    // CHARACTER LAB
-    // =====================================================
-
-    createCharacterLab() {
-
-        /*
-         * Нейтральный пол.
-         *
-         * Он существует только как
-         * геометрия для Character/Gait.
-         *
-         * Renderer его НЕ рисует.
-         *
-         * Поэтому никаких линий,
-         * маршрутов или старой сетки
-         * на экране не будет.
-         */
-
-        const floor =
-            new Surface({
-
-                id:
-                    'character_lab_floor',
-
-                name:
-                    'Character Lab Floor',
-
-                width:
-                    160,
-
-                normalSide:
-                    'left',
-
-                points: [
-
-                    {
-                        x: -700,
-                        y: 0
-                    },
-
-                    {
-                        x: 700,
-                        y: 0
-                    }
-                ]
-            });
-
-
-        this.surfaces.set(
-            floor.id,
-            floor
-        );
-    }
-
-
-    // =====================================================
-    // CHARACTER
-    // =====================================================
-
-    initializeCharacter() {
-
-        const floor =
-            this.surfaces.get(
-                'character_lab_floor'
-            );
-
-
-        if (!floor) {
-
-            throw new Error(
-                'ASTRAWAY Character Lab: поверхность отсутствует.'
-            );
-        }
-
-
-        const startT =
-            0.5;
-
-
-        const startPoint =
-            floor.getPoint(
-                startT
-            );
-
-
-        this.character.initialize(
-            startPoint,
-            floor,
-            startT
-        );
-    }
-
-
-    // =====================================================
-    // START
-    // =====================================================
 
     start() {
 
@@ -190,26 +248,20 @@ export class World {
             this.initialize();
         }
 
-
         this.started =
             true;
     }
 
-
-    // =====================================================
-    // STOP
-    // =====================================================
 
     stop() {
 
         this.started =
             false;
 
-
         if (
             this.character &&
             typeof this.character.stop ===
-                'function'
+                "function"
         ) {
 
             this.character.stop();
@@ -217,30 +269,18 @@ export class World {
     }
 
 
-    // =====================================================
-    // UPDATE
-    // =====================================================
-
     update(dt) {
 
         if (
             !this.initialized ||
             !this.started
         ) {
-
             return;
         }
 
-
-        this.character.update(
-            dt
-        );
+        this.character.update(dt);
     }
 
-
-    // =====================================================
-    // GETTERS
-    // =====================================================
 
     getCharacter() {
 
@@ -272,31 +312,15 @@ export class World {
     }
 
 
-    // =====================================================
-    // OLD NAVIGATION — REMOVED
-    // =====================================================
+    getGeometry() {
 
-    handleTap() {
-
-        /*
-         * Navigation removed.
-         *
-         * Позже здесь будет новый
-         * interaction/traversal system.
-         */
-
-        return false;
+        return this.geometry;
     }
 
-
-    // =====================================================
-    // VALIDATION
-    // =====================================================
 
     validate() {
 
         const errors = [];
-
 
         for (
             const surface
@@ -305,13 +329,13 @@ export class World {
 
             if (
                 typeof surface.validate ===
-                    'function' &&
+                    "function" &&
                 surface.validate() !== true
             ) {
 
                 errors.push({
                     type:
-                        'surface',
+                        "surface",
 
                     id:
                         surface.id
@@ -319,30 +343,25 @@ export class World {
             }
         }
 
-
         if (
             typeof this.character.validate ===
-                'function'
+                "function"
         ) {
 
-            const characterResult =
+            const result =
                 this.character.validate();
 
-
-            if (
-                !characterResult.valid
-            ) {
+            if (!result.valid) {
 
                 errors.push({
                     type:
-                        'character',
+                        "character",
 
                     details:
-                        characterResult
+                        result
                 });
             }
         }
-
 
         return {
 
@@ -354,10 +373,6 @@ export class World {
     }
 
 
-    // =====================================================
-    // SNAPSHOT
-    // =====================================================
-
     snapshot() {
 
         return {
@@ -368,6 +383,9 @@ export class World {
             started:
                 this.started,
 
+            geometry:
+                this.geometry.snapshot(),
+
             surfaces:
                 this.getSurfaces()
                     .map(
@@ -377,7 +395,7 @@ export class World {
 
             character:
                 typeof this.character.getState ===
-                    'function'
+                    "function"
                     ? this.character.getState()
                     : null
         };
@@ -394,9 +412,7 @@ export function createWorld(
             options
         );
 
-
     world.initialize();
-
 
     return world;
 }
