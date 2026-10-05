@@ -27,7 +27,6 @@
 // - COM / balance math (BodyState)
 // - rendering
 
-
 import Skeleton from "./Skeleton.js";
 
 import {
@@ -257,6 +256,29 @@ export class Character {
 
         this.initialized =
             false;
+
+
+        /*
+         * Anatomical support offset.
+         *
+         * Character.position is the logical position
+         * on the surface.
+         *
+         * Skeleton.root is the anatomical pelvis/root.
+         *
+         * In the current Skeleton rest pose the feet
+         * are approximately 69 world units below the
+         * pelvis, so the root must be raised.
+         *
+         * This is deliberately kept here rather than
+         * inside World / Geometry / Gait.
+         */
+
+        this.rootSupportOffset =
+            finite(
+                options.rootSupportOffset,
+                -69
+            );
     }
 
 
@@ -315,15 +337,7 @@ export class Character {
          * Root first.
          */
 
-        this.skeleton.setRootPosition(
-            this.position.x,
-            this.position.y
-        );
-
-
-        this.skeleton.setRootAngle(
-            this.moveAngle
-        );
+        this.updateSkeletonBase();
 
 
         /*
@@ -331,7 +345,9 @@ export class Character {
          * Upper body is owned by FBC.
          */
 
-        this.updateSkeletonBase();
+        this.skeleton.setRootAngle(
+            this.moveAngle
+        );
 
 
         /*
@@ -564,22 +580,17 @@ export class Character {
             frame.position.y;
 
 
-        this.skeleton.setRootPosition(
-            this.position.x,
-            this.position.y
-        );
+        /*
+         * Root placement uses the anatomical support
+         * offset through updateSkeletonBase().
+         */
+
+        this.updateSkeletonBase();
 
 
         this.skeleton.setRootAngle(
             this.moveAngle
         );
-
-
-        /*
-         * Root only.
-         */
-
-        this.updateSkeletonBase();
 
 
         /*
@@ -1332,35 +1343,30 @@ export class Character {
     updateSkeletonBase() {
 
         /*
-         * Root placement only.
+         * Character.position = логическая позиция
+         * опорной точки на поверхности.
          *
-         * Upper body:
-         * FullBodyController
+         * Skeleton.root = анатомический центр
+         * персонажа.
          *
-         * Legs:
-         * Gait + IK
+         * В текущей rest pose (позе покоя)
+         * стопы находятся примерно на 69 world units
+         * ниже pelvis.
          *
-         * FK:
-         * Skeleton
-         *
-         * NOTE:
-         *
-         * rootAngle is intentionally decoupled from
-         * moveAngle for the current iteration.
-         *
-         * moveAngle remains movement direction along
-         * the surface tangent.
-         *
-         * For flat walking the body stays aligned with
-         * world gravity: rootAngle = 0.
-         *
-         * Slope / climb orientation will be handled
-         * later as a separate architectural step.
+         * Поэтому root должен находиться выше поверхности.
          */
 
+        const rootX =
+            this.position.x;
+
+        const rootY =
+            this.position.y +
+            this.rootSupportOffset;
+
+
         this.skeleton.setRootPosition(
-            this.position.x,
-            this.position.y
+            rootX,
+            rootY
         );
 
 
