@@ -172,13 +172,28 @@ export class World {
             );
 
         /*
-         * World bounds intentionally cover
-         * the whole current Character Lab,
-         * including the beam above the character.
+         * Bounds are derived from Character Lab geometry
+         * (pixel source → world via Geometry), not magic numbers.
+         *
+         * Image 826×1372, PPU=2:
+         *   X ≈ [-206.5 … +206.5]
+         *   Y ≈ [-460 … 0]  (beam → ground)
+         *
+         * Padding keeps ladder/beam/hill edges on-screen.
          */
-        this.width = 413;
+        const bounds =
+            this.computeBounds();
 
-        this.height = 920;
+        this.minX = bounds.minX;
+        this.maxX = bounds.maxX;
+        this.minY = bounds.minY;
+        this.maxY = bounds.maxY;
+
+        this.width =
+            this.maxX - this.minX;
+
+        this.height =
+            this.maxY - this.minY;
 
         this.surfaces =
             new Map([
@@ -208,15 +223,94 @@ export class World {
                     10
             });
 
+        /*
+         * Place character near image centre (world X ≈ 0)
+         * so the lab reads correctly under a portrait camera.
+         * Ground spans ≈ [-206.5 … 8.5] → t ≈ 0.96.
+         */
         this.startT =
             options.startT ??
-            0.5;
+            0.96;
 
         this.started =
             false;
 
         this.initialized =
             false;
+    }
+
+
+    computeBounds() {
+
+        const geometry =
+            this.geometry;
+
+        const points = [];
+
+        const pushPoints =
+            list => {
+                if (!Array.isArray(list)) {
+                    return;
+                }
+                for (const p of list) {
+                    if (
+                        p &&
+                        Number.isFinite(p.x) &&
+                        Number.isFinite(p.y)
+                    ) {
+                        points.push(p);
+                    }
+                }
+            };
+
+        pushPoints(
+            geometry.getGround().points
+        );
+        pushPoints(
+            geometry.getHill().points
+        );
+        for (const step of geometry.getSteps()) {
+            pushPoints(step.points);
+        }
+        const ladder =
+            geometry.getLadder();
+        pushPoints(ladder.leftRail);
+        pushPoints(ladder.rightRail);
+        pushPoints(
+            geometry.getBeam().points
+        );
+        pushPoints(
+            geometry.getRope().points
+        );
+
+        let minX = 0;
+        let maxX = 0;
+        let minY = 0;
+        let maxY = 0;
+
+        if (points.length > 0) {
+            minX = points[0].x;
+            maxX = points[0].x;
+            minY = points[0].y;
+            maxY = points[0].y;
+
+            for (const p of points) {
+                if (p.x < minX) minX = p.x;
+                if (p.x > maxX) maxX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.y > maxY) maxY = p.y;
+            }
+        }
+
+        const padX = 24;
+        const padY = 48;
+
+        return {
+            minX: minX - padX,
+            maxX: maxX + padX,
+            minY: minY - padY,
+            maxY: maxY + padY
+        };
     }
 
 
