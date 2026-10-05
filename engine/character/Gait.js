@@ -1,504 +1,1327 @@
 import {
-  clamp01,
-  distance,
-  finite,
-  normalize,
-  lerpPoint,
-  addScaled
+    clamp01,
+    finite,
+    normalize,
+    lerpPoint,
+    addScaled
 } from "../core/MathUtils.js";
 
+
 export default class Gait {
-  constructor(options = {}) {
-    this.stepLength = finite(options.stepLength, 30);
-    this.stepHeight = finite(options.stepHeight, 11);
-    this.stepDuration = Math.max(
-      0.05,
-      finite(options.stepDuration, 0.18)
-    );
 
-    this.phase = 0;
-    this.distanceAccumulator = 0;
+    constructor(options = {}) {
 
-    this.previousCharacterPosition = null;
-    this.movementDirection = 1;
+        this.stepLength =
+            Math.max(
+                1,
+                finite(
+                    options.stepLength,
+                    30
+                )
+            );
 
-    this.stepDemand = 0;
 
-    this.legs = {
-      left: this._createLeg("left"),
-      right: this._createLeg("right")
-    };
+        this.stepHeight =
+            Math.max(
+                0,
+                finite(
+                    options.stepHeight,
+                    11
+                )
+            );
 
-    this.skeleton = null;
-  }
 
-  bindSkeleton(skeleton) {
-    this.skeleton = skeleton;
-  }
+        this.stepDuration =
+            Math.max(
+                0.05,
+                finite(
+                    options.stepDuration,
+                    0.18
+                )
+            );
 
-  initialize(position = null) {
-    this.phase = 0;
-    this.distanceAccumulator = 0;
-    this.previousCharacterPosition = position
-      ? { x: position.x, y: position.y }
-      : null;
 
-    this.stepDemand = 0;
+        // -------------------------------------------------
+        // RHYTHM
+        // -------------------------------------------------
 
-    if (!this.skeleton) {
-      return;
+        this.phase = 0;
+
+        this.distanceAccumulator = 0;
+
+        this.previousCharacterPosition =
+            null;
+
+        this.movementDirection = 1;
+
+
+        // -------------------------------------------------
+        // SUPPORT DEMAND
+        // -------------------------------------------------
+
+        /*
+         * External request from SupportConstraint.
+         *
+         * 0 = normal rhythm
+         * 1 = support is strongly demanding a step
+         */
+
+        this.stepDemand = 0;
+
+
+        // -------------------------------------------------
+        // LEGS
+        // -------------------------------------------------
+
+        this.legs = {
+
+            left:
+                this._createLeg(
+                    "left"
+                ),
+
+            right:
+                this._createLeg(
+                    "right"
+                )
+        };
+
+
+        this.skeleton = null;
+
+
+        // Current locomotion frame.
+        //
+        // Gait does not own the surface.
+        // Character supplies the frame every update.
+
+        this.tangent = {
+            x: 1,
+            y: 0
+        };
+
+        this.normal = {
+            x: 0,
+            y: -1
+        };
     }
 
-    const left = this.skeleton.getBoneWorldPosition("ankleL");
-    const right = this.skeleton.getBoneWorldPosition("ankleR");
 
-    if (left) {
-      this._initializeLeg(this.legs.left, left);
+    // =====================================================
+    // BINDING
+    // =====================================================
+
+    bindSkeleton(skeleton) {
+
+        this.skeleton =
+            skeleton;
     }
 
-    if (right) {
-      this._initializeLeg(this.legs.right, right);
-    }
-  }
 
-  update({
-    dt = 0,
-    characterPosition = null,
-    tangent = { x: 1, y: 0 },
-    normal = { x: 0, y: -1 }
-  } = {}) {
-    const safeDt = Math.max(
-      0,
-      finite(dt, 0)
-    );
+    // =====================================================
+    // INITIALIZATION
+    // =====================================================
 
-    const safeTangent = normalize(
-      tangent,
-      { x: 1, y: 0 }
-    );
-
-    const safeNormal = normalize(
-      normal,
-      { x: 0, y: -1 }
-    );
-
-    const movement = this._measureMovement(
-      characterPosition,
-      safeTangent
-    );
-
-    this._updatePhase(
-      movement.signedDistance,
-      safeDt
-    );
-
-    this._tryStartStep(
-      "left",
-      safeTangent,
-      safeNormal
-    );
-
-    this._tryStartStep(
-      "right",
-      safeTangent,
-      safeNormal
-    );
-
-    this._updateLeg(
-      this.legs.left,
-      safeDt,
-      safeNormal
-    );
-
-    this._updateLeg(
-      this.legs.right,
-      safeDt,
-      safeNormal
-    );
-
-    this._stabilizeIdleLegs();
-
-    if (characterPosition) {
-      this.previousCharacterPosition = {
-        x: characterPosition.x,
-        y: characterPosition.y
-      };
-    }
-
-    return this.getSnapshot();
-  }
-
-  setStepDemand(value) {
-    this.stepDemand = clamp01(
-      finite(value, 0)
-    );
-  }
-
-  getStepDemand() {
-    return clamp01(
-      finite(this.stepDemand, 0)
-    );
-  }
-
-  getLegState(side) {
-    const leg = this.legs[side];
-
-    if (!leg) {
-      return null;
-    }
-
-    return {
-      side: leg.side,
-      planted: leg.planted,
-      stepping: leg.stepping,
-
-      position: leg.position
-        ? {
-            x: leg.position.x,
-            y: leg.position.y
-          }
-        : null,
-
-      plantedPosition: leg.plantedPosition
-        ? {
-            x: leg.plantedPosition.x,
-            y: leg.plantedPosition.y
-          }
-        : null,
-
-      startPosition: leg.startPosition
-        ? {
-            x: leg.startPosition.x,
-            y: leg.startPosition.y
-          }
-        : null,
-
-      targetPosition: leg.targetPosition
-        ? {
-            x: leg.targetPosition.x,
-            y: leg.targetPosition.y
-          }
-        : null,
-
-      progress: leg.progress,
-      lastSurfaceT: leg.lastSurfaceT
-    };
-  }
-
-  getSnapshot() {
-    return {
-      phase: this.phase,
-      distanceAccumulator: this.distanceAccumulator,
-      movementDirection: this.movementDirection,
-      stepDemand: this.stepDemand,
-
-      left: this.getLegState("left"),
-      right: this.getLegState("right")
-    };
-  }
-
-  reset() {
-    this.phase = 0;
-    this.distanceAccumulator = 0;
-    this.previousCharacterPosition = null;
-    this.movementDirection = 1;
-    this.stepDemand = 0;
-
-    this.legs.left = this._createLeg("left");
-    this.legs.right = this._createLeg("right");
-  }
-
-  validate() {
-    return {
-      phase: finite(this.phase, 0),
-      distanceAccumulator: finite(
-        this.distanceAccumulator,
-        0
-      ),
-      movementDirection: this.movementDirection,
-      stepDemand: this.getStepDemand(),
-
-      left: this.getLegState("left"),
-      right: this.getLegState("right")
-    };
-  }
-
-  _createLeg(side) {
-    return {
-      side,
-
-      planted: true,
-      stepping: false,
-
-      position: null,
-      plantedPosition: null,
-
-      startPosition: null,
-      targetPosition: null,
-
-      progress: 0,
-      lastSurfaceT: null
-    };
-  }
-
-  _initializeLeg(leg, position) {
-    const point = {
-      x: finite(position.x, 0),
-      y: finite(position.y, 0)
-    };
-
-    leg.planted = true;
-    leg.stepping = false;
-
-    leg.position = { ...point };
-    leg.plantedPosition = { ...point };
-
-    leg.startPosition = { ...point };
-    leg.targetPosition = { ...point };
-
-    leg.progress = 0;
-    leg.lastSurfaceT = null;
-  }
-
-  _measureMovement(characterPosition, tangent) {
-    if (
-      !characterPosition ||
-      !this.previousCharacterPosition
+    initialize(
+        position = null,
+        tangent = null,
+        normal = null,
+        surface = null,
+        surfaceT = 0
     ) {
-      return {
-        signedDistance: 0
-      };
+
+        this.phase = 0;
+
+        this.distanceAccumulator = 0;
+
+        this.stepDemand = 0;
+
+        this.movementDirection = 1;
+
+
+        if (position) {
+
+            this.previousCharacterPosition = {
+
+                x:
+                    finite(
+                        position.x,
+                        0
+                    ),
+
+                y:
+                    finite(
+                        position.y,
+                        0
+                    )
+            };
+
+        } else {
+
+            this.previousCharacterPosition =
+                null;
+        }
+
+
+        if (tangent) {
+
+            this.tangent =
+                normalize(
+                    finite(
+                        tangent.x,
+                        1
+                    ),
+
+                    finite(
+                        tangent.y,
+                        0
+                    ),
+
+                    1,
+                    0
+                );
+        }
+
+
+        if (normal) {
+
+            this.normal =
+                normalize(
+                    finite(
+                        normal.x,
+                        0
+                    ),
+
+                    finite(
+                        normal.y,
+                        -1
+                    ),
+
+                    0,
+                    -1
+                );
+        }
+
+
+        /*
+         * surface and surfaceT are intentionally accepted
+         * because Character already provides them.
+         *
+         * Gait does not own or store surface geometry.
+         */
+
+        const left =
+            this._getSkeletonWorldPosition(
+                "ankleL"
+            );
+
+        const right =
+            this._getSkeletonWorldPosition(
+                "ankleR"
+            );
+
+
+        if (left) {
+
+            this._initializeLeg(
+                this.legs.left,
+                left
+            );
+        }
+
+
+        if (right) {
+
+            this._initializeLeg(
+                this.legs.right,
+                right
+            );
+        }
     }
 
-    const dx =
-      characterPosition.x -
-      this.previousCharacterPosition.x;
 
-    const dy =
-      characterPosition.y -
-      this.previousCharacterPosition.y;
+    // =====================================================
+    // UPDATE
+    // =====================================================
 
-    const signedDistance =
-      dx * tangent.x +
-      dy * tangent.y;
+    update(
+        dt = 0,
+        frameDistance = 0,
+        characterPosition = null,
+        tangent = null,
+        normal = null,
+        surface = null,
+        surfaceT = 0,
+        isMoving = false
+    ) {
 
-    if (Math.abs(signedDistance) > 0.0001) {
-      this.movementDirection =
-        signedDistance >= 0 ? 1 : -1;
-    }
+        const safeDt =
+            Math.max(
+                0,
+                finite(
+                    dt,
+                    0
+                )
+            );
 
-    return {
-      signedDistance
-    };
-  }
 
-  _updatePhase(signedDistance, dt) {
-    const magnitude = Math.abs(
-      finite(signedDistance, 0)
-    );
+        if (tangent) {
 
-    this.distanceAccumulator += magnitude;
+            this.tangent =
+                normalize(
+                    finite(
+                        tangent.x,
+                        this.tangent.x
+                    ),
 
-    if (magnitude > 0) {
-      const phaseDistance =
-        Math.max(
-          0.001,
-          this.stepLength
+                    finite(
+                        tangent.y,
+                        this.tangent.y
+                    ),
+
+                    this.tangent.x,
+                    this.tangent.y
+                );
+        }
+
+
+        if (normal) {
+
+            this.normal =
+                normalize(
+                    finite(
+                        normal.x,
+                        this.normal.x
+                    ),
+
+                    finite(
+                        normal.y,
+                        this.normal.y
+                    ),
+
+                    this.normal.x,
+                    this.normal.y
+                );
+        }
+
+
+        const movement =
+            this._measureMovement(
+                characterPosition
+            );
+
+
+        /*
+         * Use signed movement along the current surface
+         * tangent for rhythm.
+         *
+         * frameDistance is retained as a fallback diagnostic
+         * when no previous position exists.
+         */
+
+        let signedDistance =
+            movement.signedDistance;
+
+
+        if (
+            !Number.isFinite(
+                signedDistance
+            )
+        ) {
+
+            signedDistance =
+                finite(
+                    frameDistance,
+                    0
+                ) *
+                this.movementDirection;
+        }
+
+
+        if (
+            Math.abs(
+                signedDistance
+            ) <
+            0.000001 &&
+            Math.abs(
+                frameDistance
+            ) >
+            0.000001
+        ) {
+
+            signedDistance =
+                Math.abs(
+                    frameDistance
+                ) *
+                this.movementDirection;
+        }
+
+
+        this._updatePhase(
+            signedDistance
         );
 
-      this.phase =
-        (
-          this.phase +
-          magnitude / phaseDistance
-        ) % 1;
-    } else if (dt > 0) {
-      const stepping =
-        this.legs.left.stepping ||
-        this.legs.right.stepping;
 
-      if (!stepping) {
-        this.phase =
-          (this.phase + dt * 0.35) % 1;
-      }
+        /*
+         * Step selection happens before trajectory update.
+         *
+         * SupportConstraint demand can therefore request
+         * a step even when normal rhythmic movement has
+         * temporarily stopped.
+         */
+
+        if (isMoving) {
+
+            this._tryStartStep(
+                "left"
+            );
+
+            this._tryStartStep(
+                "right"
+            );
+        }
+
+
+        this._updateLeg(
+            this.legs.left,
+            safeDt
+        );
+
+
+        this._updateLeg(
+            this.legs.right,
+            safeDt
+        );
+
+
+        this._stabilizeIdleLegs();
+
+
+        if (characterPosition) {
+
+            this.previousCharacterPosition = {
+
+                x:
+                    finite(
+                        characterPosition.x,
+                        0
+                    ),
+
+                y:
+                    finite(
+                        characterPosition.y,
+                        0
+                    )
+            };
+        }
+
+
+        return this._buildCharacterResult();
     }
-  }
 
-  _tryStartStep(side, tangent, normal) {
-    const leg = this.legs[side];
 
-    if (!leg || leg.stepping) {
-      return;
+    // =====================================================
+    // SUPPORT DEMAND
+    // =====================================================
+
+    setStepDemand(value) {
+
+        this.stepDemand =
+            clamp01(
+                finite(
+                    value,
+                    0
+                )
+            );
     }
 
-    const opposite =
-      side === "left"
-        ? this.legs.right
-        : this.legs.left;
 
-    if (opposite.stepping) {
-      return;
+    getStepDemand() {
+
+        return clamp01(
+            finite(
+                this.stepDemand,
+                0
+            )
+        );
     }
 
-    if (!leg.position) {
-      return;
+
+    // =====================================================
+    // PUBLIC LEG STATE
+    // =====================================================
+
+    getLegState(side) {
+
+        const leg =
+            this.legs[side];
+
+
+        if (!leg) {
+            return null;
+        }
+
+
+        return {
+
+            side:
+                leg.side,
+
+            planted:
+                leg.planted,
+
+            stepping:
+                leg.stepping,
+
+
+            position:
+                leg.position
+                    ? {
+                        x:
+                            leg.position.x,
+
+                        y:
+                            leg.position.y
+                    }
+                    : null,
+
+
+            plantedPosition:
+                leg.plantedPosition
+                    ? {
+                        x:
+                            leg.plantedPosition.x,
+
+                        y:
+                            leg.plantedPosition.y
+                    }
+                    : null,
+
+
+            startPosition:
+                leg.startPosition
+                    ? {
+                        x:
+                            leg.startPosition.x,
+
+                        y:
+                            leg.startPosition.y
+                    }
+                    : null,
+
+
+            targetPosition:
+                leg.targetPosition
+                    ? {
+                        x:
+                            leg.targetPosition.x,
+
+                        y:
+                            leg.targetPosition.y
+                    }
+                    : null,
+
+
+            progress:
+                leg.progress,
+
+            lastSurfaceT:
+                leg.lastSurfaceT
+        };
     }
 
-    const direction =
-      this.movementDirection >= 0
-        ? 1
-        : -1;
 
-    const desiredDistance =
-      this.distanceAccumulator;
+    // =====================================================
+    // SNAPSHOT
+    // =====================================================
 
-    const rhythmReady =
-      this._rhythmReady(side);
+    getSnapshot() {
 
-    const demandReady =
-      this.stepDemand >= 0.65;
+        return {
 
-    const distanceReady =
-      desiredDistance >=
-      this.stepLength * 0.5;
+            phase:
+                this.phase,
 
-    if (
-      !rhythmReady &&
-      !demandReady &&
-      !distanceReady
+            distanceAccumulator:
+                this.distanceAccumulator,
+
+            movementDirection:
+                this.movementDirection,
+
+            stepDemand:
+                this.stepDemand,
+
+
+            left:
+                this.getLegState(
+                    "left"
+                ),
+
+            right:
+                this.getLegState(
+                    "right"
+                )
+        };
+    }
+
+
+    // =====================================================
+    // RESET
+    // =====================================================
+
+    reset() {
+
+        this.phase = 0;
+
+        this.distanceAccumulator = 0;
+
+        this.previousCharacterPosition =
+            null;
+
+        this.movementDirection = 1;
+
+        this.stepDemand = 0;
+
+
+        this.legs = {
+
+            left:
+                this._createLeg(
+                    "left"
+                ),
+
+            right:
+                this._createLeg(
+                    "right"
+                )
+        };
+    }
+
+
+    // =====================================================
+    // VALIDATION
+    // =====================================================
+
+    validate() {
+
+        return {
+
+            phase:
+                finite(
+                    this.phase,
+                    0
+                ),
+
+            distanceAccumulator:
+                finite(
+                    this.distanceAccumulator,
+                    0
+                ),
+
+            movementDirection:
+                this.movementDirection,
+
+            stepDemand:
+                this.getStepDemand(),
+
+
+            left:
+                this.getLegState(
+                    "left"
+                ),
+
+            right:
+                this.getLegState(
+                    "right"
+                )
+        };
+    }
+
+
+    // =====================================================
+    // LEG CREATION
+    // =====================================================
+
+    _createLeg(side) {
+
+        return {
+
+            side,
+
+            planted:
+                true,
+
+            stepping:
+                false,
+
+
+            position:
+                null,
+
+            plantedPosition:
+                null,
+
+
+            startPosition:
+                null,
+
+            targetPosition:
+                null,
+
+
+            progress:
+                0,
+
+            lastSurfaceT:
+                null
+        };
+    }
+
+
+    // =====================================================
+    // INITIAL LEG STATE
+    // =====================================================
+
+    _initializeLeg(
+        leg,
+        position
     ) {
-      return;
+
+        const point = {
+
+            x:
+                finite(
+                    position.x,
+                    0
+                ),
+
+            y:
+                finite(
+                    position.y,
+                    0
+                )
+        };
+
+
+        leg.planted =
+            true;
+
+        leg.stepping =
+            false;
+
+
+        leg.position =
+            {
+                ...point
+            };
+
+
+        leg.plantedPosition =
+            {
+                ...point
+            };
+
+
+        leg.startPosition =
+            {
+                ...point
+            };
+
+
+        leg.targetPosition =
+            {
+                ...point
+            };
+
+
+        leg.progress = 0;
+
+        leg.lastSurfaceT =
+            null;
     }
 
-    const stride =
-      this.stepLength * 0.65;
 
-    const target = addScaled(
-      leg.position,
-      tangent,
-      stride * direction
-    );
+    // =====================================================
+    // MOVEMENT MEASUREMENT
+    // =====================================================
 
-    this._startStep(
-      leg,
-      target,
-      normal
-    );
-  }
-
-  _rhythmReady(side) {
-    if (side === "left") {
-      return (
-        this.phase >= 0.45 &&
-        this.phase <= 0.62
-      );
-    }
-
-    return (
-      this.phase >= 0.95 ||
-      this.phase <= 0.12
-    );
-  }
-
-  _startStep(leg, target, normal) {
-    if (!leg.position) {
-      return;
-    }
-
-    leg.stepping = true;
-    leg.planted = false;
-
-    leg.startPosition = {
-      x: leg.position.x,
-      y: leg.position.y
-    };
-
-    leg.targetPosition = {
-      x: target.x,
-      y: target.y
-    };
-
-    leg.progress = 0;
-
-    this.stepDemand = 0;
-  }
-
-  _updateLeg(leg, dt, normal) {
-    if (!leg.stepping) {
-      return;
-    }
-
-    leg.progress +=
-      dt / this.stepDuration;
-
-    const t = clamp01(
-      leg.progress
-    );
-
-    const eased =
-      t * t * (3 - 2 * t);
-
-    let position = lerpPoint(
-      leg.startPosition,
-      leg.targetPosition,
-      eased
-    );
-
-    const lift =
-      Math.sin(
-        Math.PI * eased
-      ) * this.stepHeight;
-
-    position = addScaled(
-      position,
-      normal,
-      -lift
-    );
-
-    leg.position = position;
-
-    if (t >= 1) {
-      leg.position = {
-        x: leg.targetPosition.x,
-        y: leg.targetPosition.y
-      };
-
-      leg.plantedPosition = {
-        x: leg.targetPosition.x,
-        y: leg.targetPosition.y
-      };
-
-      leg.stepping = false;
-      leg.planted = true;
-      leg.progress = 0;
-
-      this.distanceAccumulator = 0;
-    }
-  }
-
-  _stabilizeIdleLegs() {
-    const left = this.legs.left;
-    const right = this.legs.right;
-
-    if (
-      left.planted &&
-      !left.stepping &&
-      left.plantedPosition
+    _measureMovement(
+        characterPosition
     ) {
-      left.position = {
-        x: left.plantedPosition.x,
-        y: left.plantedPosition.y
-      };
+
+        if (
+            !characterPosition ||
+            !this.previousCharacterPosition
+        ) {
+
+            return {
+                signedDistance:
+                    0
+            };
+        }
+
+
+        const dx =
+            finite(
+                characterPosition.x,
+                0
+            ) -
+            this.previousCharacterPosition.x;
+
+
+        const dy =
+            finite(
+                characterPosition.y,
+                0
+            ) -
+            this.previousCharacterPosition.y;
+
+
+        const signedDistance =
+            dx *
+            this.tangent.x +
+
+            dy *
+            this.tangent.y;
+
+
+        if (
+            Math.abs(
+                signedDistance
+            ) >
+            0.0001
+        ) {
+
+            this.movementDirection =
+                signedDistance >= 0
+                    ? 1
+                    : -1;
+        }
+
+
+        return {
+            signedDistance
+        };
     }
 
-    if (
-      right.planted &&
-      !right.stepping &&
-      right.plantedPosition
+
+    // =====================================================
+    // PHASE
+    // =====================================================
+
+    _updatePhase(
+        signedDistance
     ) {
-      right.position = {
-        x: right.plantedPosition.x,
-        y: right.plantedPosition.y
-      };
+
+        const magnitude =
+            Math.abs(
+                finite(
+                    signedDistance,
+                    0
+                )
+            );
+
+
+        this.distanceAccumulator +=
+            magnitude;
+
+
+        const phaseDistance =
+            Math.max(
+                0.001,
+                this.stepLength
+            );
+
+
+        if (
+            magnitude >
+            0.000001
+        ) {
+
+            this.phase =
+                (
+                    this.phase +
+                    magnitude /
+                    phaseDistance
+                ) %
+                1;
+        }
     }
-  }
+
+
+    // =====================================================
+    // STEP DECISION
+    // =====================================================
+
+    _tryStartStep(side) {
+
+        const leg =
+            this.legs[side];
+
+
+        if (
+            !leg ||
+            leg.stepping ||
+            !leg.position
+        ) {
+            return;
+        }
+
+
+        const opposite =
+            side === "left"
+                ? this.legs.right
+                : this.legs.left;
+
+
+        /*
+         * Never allow both feet to enter swing at once
+         * during Phase 1.
+         */
+
+        if (
+            opposite &&
+            opposite.stepping
+        ) {
+            return;
+        }
+
+
+        const rhythmReady =
+            this._rhythmReady(
+                side
+            );
+
+
+        const demandReady =
+            this.stepDemand >=
+            0.65;
+
+
+        const distanceReady =
+            this.distanceAccumulator >=
+            this.stepLength * 0.5;
+
+
+        if (
+            !rhythmReady &&
+            !demandReady &&
+            !distanceReady
+        ) {
+            return;
+        }
+
+
+        const direction =
+            this.movementDirection >= 0
+                ? 1
+                : -1;
+
+
+        const stride =
+            this.stepLength *
+            0.65;
+
+
+        const target =
+            addScaled(
+                leg.position,
+                this.tangent,
+                stride *
+                direction
+            );
+
+
+        this._startStep(
+            leg,
+            target
+        );
+    }
+
+
+    // =====================================================
+    // RHYTHM
+    // =====================================================
+
+    _rhythmReady(side) {
+
+        if (
+            side === "left"
+        ) {
+
+            return (
+                this.phase >= 0.45 &&
+                this.phase <= 0.62
+            );
+        }
+
+
+        return (
+            this.phase >= 0.95 ||
+            this.phase <= 0.12
+        );
+    }
+
+
+    // =====================================================
+    // START STEP
+    // =====================================================
+
+    _startStep(
+        leg,
+        target
+    ) {
+
+        if (
+            !leg ||
+            !leg.position
+        ) {
+            return;
+        }
+
+
+        leg.stepping =
+            true;
+
+        leg.planted =
+            false;
+
+
+        leg.startPosition = {
+
+            x:
+                leg.position.x,
+
+            y:
+                leg.position.y
+        };
+
+
+        leg.targetPosition = {
+
+            x:
+                target.x,
+
+            y:
+                target.y
+        };
+
+
+        leg.progress = 0;
+
+
+        /*
+         * The demand has been consumed.
+         */
+
+        this.stepDemand = 0;
+    }
+
+
+    // =====================================================
+    // STEP TRAJECTORY
+    // =====================================================
+
+    _updateLeg(
+        leg,
+        dt
+    ) {
+
+        if (
+            !leg ||
+            !leg.stepping
+        ) {
+            return;
+        }
+
+
+        leg.progress +=
+            dt /
+            this.stepDuration;
+
+
+        const t =
+            clamp01(
+                leg.progress
+            );
+
+
+        /*
+         * Smoothstep gives the foot a continuous
+         * acceleration/deceleration profile.
+         */
+
+        const eased =
+            t *
+            t *
+            (
+                3 -
+                2 * t
+            );
+
+
+        let position =
+            lerpPoint(
+                leg.startPosition,
+                leg.targetPosition,
+                eased
+            );
+
+
+        /*
+         * Lift is expressed against the supplied surface
+         * normal.
+         *
+         * normal points away from the support surface,
+         * therefore positive lift is -normal in the
+         * current coordinate convention.
+         */
+
+        const lift =
+            Math.sin(
+                Math.PI *
+                eased
+            ) *
+            this.stepHeight;
+
+
+        position =
+            addScaled(
+                position,
+                this.normal,
+                -lift
+            );
+
+
+        leg.position =
+            position;
+
+
+        if (
+            t >= 1
+        ) {
+
+            leg.position = {
+
+                x:
+                    leg.targetPosition.x,
+
+                y:
+                    leg.targetPosition.y
+            };
+
+
+            leg.plantedPosition = {
+
+                x:
+                    leg.targetPosition.x,
+
+                y:
+                    leg.targetPosition.y
+            };
+
+
+            leg.stepping =
+                false;
+
+            leg.planted =
+                true;
+
+            leg.progress =
+                0;
+
+
+            /*
+             * The completed step consumes the accumulated
+             * local travel used to trigger the step.
+             */
+
+            this.distanceAccumulator =
+                0;
+        }
+    }
+
+
+    // =====================================================
+    // IDLE STABILIZATION
+    // =====================================================
+
+    _stabilizeIdleLegs() {
+
+        const left =
+            this.legs.left;
+
+        const right =
+            this.legs.right;
+
+
+        if (
+            left.planted &&
+            !left.stepping &&
+            left.plantedPosition
+        ) {
+
+            left.position = {
+
+                x:
+                    left.plantedPosition.x,
+
+                y:
+                    left.plantedPosition.y
+            };
+        }
+
+
+        if (
+            right.planted &&
+            !right.stepping &&
+            right.plantedPosition
+        ) {
+
+            right.position = {
+
+                x:
+                    right.plantedPosition.x,
+
+                y:
+                    right.plantedPosition.y
+            };
+        }
+    }
+
+
+    // =====================================================
+    // CHARACTER COMPATIBILITY RESULT
+    // =====================================================
+
+    _buildCharacterResult() {
+
+        const left =
+            this.legs.left.position
+                ? {
+                    x:
+                        this.legs.left.position.x,
+
+                    y:
+                        this.legs.left.position.y
+                }
+                : {
+                    x: 0,
+                    y: 0
+                };
+
+
+        const right =
+            this.legs.right.position
+                ? {
+                    x:
+                        this.legs.right.position.x,
+
+                    y:
+                        this.legs.right.position.y
+                }
+                : {
+                    x: 0,
+                    y: 0
+                };
+
+
+        return {
+
+            left,
+
+            right,
+
+
+            leftPlanted:
+                this.legs.left.planted &&
+                !this.legs.left.stepping,
+
+
+            rightPlanted:
+                this.legs.right.planted &&
+                !this.legs.right.stepping,
+
+
+            leftStepping:
+                this.legs.left.stepping,
+
+
+            rightStepping:
+                this.legs.right.stepping,
+
+
+            phase:
+                this.phase,
+
+
+            stepDemand:
+                this.stepDemand
+        };
+    }
+
+
+    // =====================================================
+    // SKELETON POSITION ACCESS
+    // =====================================================
+
+    _getSkeletonWorldPosition(
+        boneName
+    ) {
+
+        if (!this.skeleton) {
+            return null;
+        }
+
+
+        if (
+            typeof this.skeleton.getBone !==
+            "function"
+        ) {
+            return null;
+        }
+
+
+        const bone =
+            this.skeleton.getBone(
+                boneName
+            );
+
+
+        if (!bone) {
+            return null;
+        }
+
+
+        if (
+            typeof bone.getWorldPosition ===
+            "function"
+        ) {
+
+            return bone.getWorldPosition();
+        }
+
+
+        if (
+            Number.isFinite(
+                bone.worldX
+            ) &&
+            Number.isFinite(
+                bone.worldY
+            )
+        ) {
+
+            return {
+
+                x:
+                    bone.worldX,
+
+                y:
+                    bone.worldY
+            };
+        }
+
+
+        return null;
+    }
 }
