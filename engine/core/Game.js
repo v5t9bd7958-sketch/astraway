@@ -1,20 +1,23 @@
 /**
  * ASTRAWAY — Game
  *
- * Чистый Character Lab.
+ * Character Lab.
  *
- * Никакого:
- * - background
- * - дерева
- * - navigation
- * - routes
- * - старой сетки
- * - старых изображений
+ * Отвечает за:
+ * - World
+ * - Camera
+ * - Renderer
+ * - InputController
+ * - игровой цикл
+ *
+ * Input:
+ * tap → screenToWorld → Character.setPath()
  */
 
 import { World } from './World.js';
 import { Camera } from '../camera/Camera.js';
 import { Renderer } from '../render/Renderer.js';
+import { InputController } from '../input/InputController.js';
 
 
 export class Game {
@@ -59,6 +62,21 @@ export class Game {
         );
 
 
+        // =================================================
+        // INPUT
+        // =================================================
+
+        this.input =
+            new InputController(
+                this.canvas,
+                this.camera,
+                {
+                    onTap:
+                        this.handleTap.bind(this)
+                }
+            );
+
+
         this.running =
             false;
 
@@ -98,8 +116,91 @@ export class Game {
         window.addEventListener(
             'resize',
             this.handleResize,
-            { passive: true }
+            {
+                passive: true
+            }
         );
+    }
+
+
+    // =====================================================
+    // INPUT
+    // =====================================================
+
+    handleTap(data) {
+
+        if (
+            !data ||
+            !data.world
+        ) {
+            return;
+        }
+
+
+        if (
+            !this.world ||
+            !this.world.character
+        ) {
+            return;
+        }
+
+
+        const character =
+            this.world.character;
+
+
+        const targetX =
+            Number.isFinite(
+                data.world.x
+            )
+                ? data.world.x
+                : character.position.x;
+
+
+        /*
+         * Пока у нас только плоская тестовая
+         * поверхность.
+         *
+         * Поэтому тап задаёт X-направление,
+         * а Y сохраняем текущим.
+         *
+         * Это не навигация.
+         * Это временная locomotion-проверка
+         * (проверка передвижения).
+         */
+
+        const targetY =
+            character.position.y;
+
+
+        const dx =
+            targetX -
+            character.position.x;
+
+
+        if (
+            Math.abs(dx) <
+            0.001
+        ) {
+            return;
+        }
+
+
+        character.setPath([
+            {
+                x:
+                    targetX,
+
+                y:
+                    targetY,
+
+                surface:
+                    null,
+
+                t:
+                    0
+            }
+        ]);
     }
 
 
@@ -117,26 +218,34 @@ export class Game {
         this.world.initialize();
 
 
-        /*
-         * Bounds come directly from World.
-         */
         const minX =
-            Number.isFinite(this.world.minX)
+            Number.isFinite(
+                this.world.minX
+            )
                 ? this.world.minX
                 : -226.5;
 
+
         const maxX =
-            Number.isFinite(this.world.maxX)
+            Number.isFinite(
+                this.world.maxX
+            )
                 ? this.world.maxX
                 : 226.5;
 
+
         const minY =
-            Number.isFinite(this.world.minY)
+            Number.isFinite(
+                this.world.minY
+            )
                 ? this.world.minY
                 : -500;
 
+
         const maxY =
-            Number.isFinite(this.world.maxY)
+            Number.isFinite(
+                this.world.maxY
+            )
                 ? this.world.maxY
                 : 40;
 
@@ -167,22 +276,7 @@ export class Game {
         );
 
 
-        /*
-         * IMPORTANT:
-         *
-         * First calculate the correct framing
-         * for the entire Character Lab.
-         */
         this.fitCameraToLab();
-
-
-        /*
-         * DO NOT snap the camera to the character here.
-         *
-         * The Character Lab is a visual test arena.
-         * Its initial framing must remain the framing
-         * calculated above.
-         */
 
 
         this.started =
@@ -194,7 +288,9 @@ export class Game {
             'function'
         ) {
 
-            this.onReady(this);
+            this.onReady(
+                this
+            );
         }
     }
 
@@ -212,12 +308,6 @@ export class Game {
             this.camera.viewportH || 1;
 
 
-        const worldW =
-            Math.max(
-                1,
-                this.camera.worldWidth
-            );
-
         const worldH =
             Math.max(
                 1,
@@ -225,14 +315,9 @@ export class Game {
             );
 
 
-        /*
-         * Character Lab is designed primarily
-         * for portrait 9:16.
-         *
-         * Fit the complete lab vertically.
-         */
         const isPortrait =
-            viewH >= viewW * 0.9;
+            viewH >=
+            viewW * 0.9;
 
 
         let zoom;
@@ -242,6 +327,7 @@ export class Game {
 
             const margin =
                 0.88;
+
 
             zoom =
                 (
@@ -279,20 +365,12 @@ export class Game {
         );
 
 
-        /*
-         * Centre the camera on the COMPLETE
-         * calculated world bounds.
-         *
-         * This is the critical part.
-         *
-         * The image itself is included in World bounds,
-         * therefore this centre includes the full photo.
-         */
         const centerX =
             (
                 this.camera.minX +
                 this.camera.maxX
             ) / 2;
+
 
         const centerY =
             (
@@ -307,11 +385,6 @@ export class Game {
         );
 
 
-        /*
-         * Lock the initial target to the same
-         * framing so the next update() does not
-         * immediately pull the camera to the character.
-         */
         this.camera.targetX =
             centerX;
 
@@ -340,15 +413,6 @@ export class Game {
         this.world.start();
 
 
-        /*
-         * IMPORTANT:
-         *
-         * Do NOT snap camera to character here.
-         *
-         * Character Lab starts with the full-lab framing.
-         */
-
-
         this.running =
             true;
 
@@ -368,7 +432,9 @@ export class Game {
             'function'
         ) {
 
-            this.onStart(this);
+            this.onStart(
+                this
+            );
         }
     }
 
@@ -397,6 +463,7 @@ export class Game {
                 this.animationFrame
             );
 
+
             this.animationFrame =
                 null;
         }
@@ -410,7 +477,9 @@ export class Game {
             'function'
         ) {
 
-            this.onStop(this);
+            this.onStop(
+                this
+            );
         }
     }
 
@@ -424,9 +493,6 @@ export class Game {
         this.stop();
 
 
-        /*
-         * Rebuild a clean Character Lab world.
-         */
         this.world =
             new World();
 
@@ -440,22 +506,33 @@ export class Game {
 
 
         const minX =
-            Number.isFinite(this.world.minX)
+            Number.isFinite(
+                this.world.minX
+            )
                 ? this.world.minX
                 : -226.5;
 
+
         const maxX =
-            Number.isFinite(this.world.maxX)
+            Number.isFinite(
+                this.world.maxX
+            )
                 ? this.world.maxX
                 : 226.5;
 
+
         const minY =
-            Number.isFinite(this.world.minY)
+            Number.isFinite(
+                this.world.minY
+            )
                 ? this.world.minY
                 : -500;
 
+
         const maxY =
-            Number.isFinite(this.world.maxY)
+            Number.isFinite(
+                this.world.maxY
+            )
                 ? this.world.maxY
                 : 40;
 
@@ -481,9 +558,6 @@ export class Game {
         );
 
 
-        /*
-         * Recalculate full-lab framing.
-         */
         this.fitCameraToLab();
 
 
@@ -530,7 +604,10 @@ export class Game {
             );
 
 
-        this.update(dt);
+        this.update(
+            dt
+        );
+
 
         this.render();
 
@@ -548,19 +625,9 @@ export class Game {
 
     update(dt) {
 
-        this.world.update(dt);
-
-
-        /*
-         * Character Lab camera is intentionally
-         * NOT following the character yet.
-         *
-         * This is a test-arena framing.
-         *
-         * Later, when the perception/planning/
-         * movement architecture is ready, camera
-         * following becomes its own explicit system.
-         */
+        this.world.update(
+            dt
+        );
 
 
         if (
@@ -609,10 +676,6 @@ export class Game {
         );
 
 
-        /*
-         * Recalculate the complete lab framing
-         * after every viewport change.
-         */
         this.fitCameraToLab();
     }
 
@@ -657,6 +720,12 @@ export class Game {
     }
 
 
+    getInput() {
+
+        return this.input;
+    }
+
+
     // =====================================================
     // VALIDATION
     // =====================================================
@@ -694,6 +763,16 @@ export class Game {
 
 
         if (
+            this.input &&
+            typeof this.input.destroy ===
+            'function'
+        ) {
+
+            this.input.destroy();
+        }
+
+
+        if (
             this.renderer &&
             typeof this.renderer.destroy ===
             'function'
@@ -710,6 +789,9 @@ export class Game {
             null;
 
         this.renderer =
+            null;
+
+        this.input =
             null;
 
         this.canvas =
