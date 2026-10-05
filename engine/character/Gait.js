@@ -4,7 +4,7 @@ import {
     normalize,
     lerpPoint,
     addScaled
-} from "../core/MathUtils.js";
+} from "./MathUtils.js";
 
 
 export default class Gait {
@@ -41,37 +41,16 @@ export default class Gait {
             );
 
 
-        // -------------------------------------------------
-        // RHYTHM
-        // -------------------------------------------------
-
         this.phase = 0;
 
         this.distanceAccumulator = 0;
 
-        this.previousCharacterPosition =
-            null;
+        this.previousCharacterPosition = null;
 
         this.movementDirection = 1;
 
-
-        // -------------------------------------------------
-        // SUPPORT DEMAND
-        // -------------------------------------------------
-
-        /*
-         * External request from SupportConstraint.
-         *
-         * 0 = normal rhythm
-         * 1 = support is strongly demanding a step
-         */
-
         this.stepDemand = 0;
 
-
-        // -------------------------------------------------
-        // LEGS
-        // -------------------------------------------------
 
         this.legs = {
 
@@ -90,11 +69,6 @@ export default class Gait {
         this.skeleton = null;
 
 
-        // Current locomotion frame.
-        //
-        // Gait does not own the surface.
-        // Character supplies the frame every update.
-
         this.tangent = {
             x: 1,
             y: 0
@@ -107,20 +81,12 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // BINDING
-    // =====================================================
-
     bindSkeleton(skeleton) {
 
         this.skeleton =
             skeleton;
     }
 
-
-    // =====================================================
-    // INITIALIZATION
-    // =====================================================
 
     initialize(
         position = null,
@@ -203,13 +169,6 @@ export default class Gait {
         }
 
 
-        /*
-         * surface and surfaceT are intentionally accepted
-         * because Character already provides them.
-         *
-         * Gait does not own or store surface geometry.
-         */
-
         const left =
             this._getSkeletonWorldPosition(
                 "ankleL"
@@ -239,10 +198,6 @@ export default class Gait {
         }
     }
 
-
-    // =====================================================
-    // UPDATE
-    // =====================================================
 
     update(
         dt = 0,
@@ -311,14 +266,6 @@ export default class Gait {
             );
 
 
-        /*
-         * Use signed movement along the current surface
-         * tangent for rhythm.
-         *
-         * frameDistance is retained as a fallback diagnostic
-         * when no previous position exists.
-         */
-
         let signedDistance =
             movement.signedDistance;
 
@@ -361,14 +308,6 @@ export default class Gait {
             signedDistance
         );
 
-
-        /*
-         * Step selection happens before trajectory update.
-         *
-         * SupportConstraint demand can therefore request
-         * a step even when normal rhythmic movement has
-         * temporarily stopped.
-         */
 
         if (isMoving) {
 
@@ -420,10 +359,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // SUPPORT DEMAND
-    // =====================================================
-
     setStepDemand(value) {
 
         this.stepDemand =
@@ -447,10 +382,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // PUBLIC LEG STATE
-    // =====================================================
-
     getLegState(side) {
 
         const leg =
@@ -473,7 +404,6 @@ export default class Gait {
             stepping:
                 leg.stepping,
 
-
             position:
                 leg.position
                     ? {
@@ -484,7 +414,6 @@ export default class Gait {
                             leg.position.y
                     }
                     : null,
-
 
             plantedPosition:
                 leg.plantedPosition
@@ -497,7 +426,6 @@ export default class Gait {
                     }
                     : null,
 
-
             startPosition:
                 leg.startPosition
                     ? {
@@ -508,7 +436,6 @@ export default class Gait {
                             leg.startPosition.y
                     }
                     : null,
-
 
             targetPosition:
                 leg.targetPosition
@@ -521,7 +448,6 @@ export default class Gait {
                     }
                     : null,
 
-
             progress:
                 leg.progress,
 
@@ -530,10 +456,6 @@ export default class Gait {
         };
     }
 
-
-    // =====================================================
-    // SNAPSHOT
-    // =====================================================
 
     getSnapshot() {
 
@@ -551,7 +473,6 @@ export default class Gait {
             stepDemand:
                 this.stepDemand,
 
-
             left:
                 this.getLegState(
                     "left"
@@ -564,10 +485,6 @@ export default class Gait {
         };
     }
 
-
-    // =====================================================
-    // RESET
-    // =====================================================
 
     reset() {
 
@@ -598,10 +515,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // VALIDATION
-    // =====================================================
-
     validate() {
 
         return {
@@ -624,7 +537,6 @@ export default class Gait {
             stepDemand:
                 this.getStepDemand(),
 
-
             left:
                 this.getLegState(
                     "left"
@@ -638,10 +550,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // LEG CREATION
-    // =====================================================
-
     _createLeg(side) {
 
         return {
@@ -654,20 +562,17 @@ export default class Gait {
             stepping:
                 false,
 
-
             position:
                 null,
 
             plantedPosition:
                 null,
 
-
             startPosition:
                 null,
 
             targetPosition:
                 null,
-
 
             progress:
                 0,
@@ -677,10 +582,6 @@ export default class Gait {
         };
     }
 
-
-    // =====================================================
-    // INITIAL LEG STATE
-    // =====================================================
 
     _initializeLeg(
         leg,
@@ -710,40 +611,31 @@ export default class Gait {
             false;
 
 
-        leg.position =
-            {
-                ...point
-            };
+        leg.position = {
+            ...point
+        };
 
 
-        leg.plantedPosition =
-            {
-                ...point
-            };
+        leg.plantedPosition = {
+            ...point
+        };
 
 
-        leg.startPosition =
-            {
-                ...point
-            };
+        leg.startPosition = {
+            ...point
+        };
 
 
-        leg.targetPosition =
-            {
-                ...point
-            };
+        leg.targetPosition = {
+            ...point
+        };
 
 
         leg.progress = 0;
 
-        leg.lastSurfaceT =
-            null;
+        leg.lastSurfaceT = null;
     }
 
-
-    // =====================================================
-    // MOVEMENT MEASUREMENT
-    // =====================================================
 
     _measureMovement(
         characterPosition
@@ -805,10 +697,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // PHASE
-    // =====================================================
-
     _updatePhase(
         signedDistance
     ) {
@@ -849,10 +737,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // STEP DECISION
-    // =====================================================
-
     _tryStartStep(side) {
 
         const leg =
@@ -873,11 +757,6 @@ export default class Gait {
                 ? this.legs.right
                 : this.legs.left;
 
-
-        /*
-         * Never allow both feet to enter swing at once
-         * during Phase 1.
-         */
 
         if (
             opposite &&
@@ -939,10 +818,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // RHYTHM
-    // =====================================================
-
     _rhythmReady(side) {
 
         if (
@@ -962,10 +837,6 @@ export default class Gait {
         );
     }
 
-
-    // =====================================================
-    // START STEP
-    // =====================================================
 
     _startStep(
         leg,
@@ -1009,18 +880,9 @@ export default class Gait {
 
         leg.progress = 0;
 
-
-        /*
-         * The demand has been consumed.
-         */
-
         this.stepDemand = 0;
     }
 
-
-    // =====================================================
-    // STEP TRAJECTORY
-    // =====================================================
 
     _updateLeg(
         leg,
@@ -1046,11 +908,6 @@ export default class Gait {
             );
 
 
-        /*
-         * Smoothstep gives the foot a continuous
-         * acceleration/deceleration profile.
-         */
-
         const eased =
             t *
             t *
@@ -1067,15 +924,6 @@ export default class Gait {
                 eased
             );
 
-
-        /*
-         * Lift is expressed against the supplied surface
-         * normal.
-         *
-         * normal points away from the support surface,
-         * therefore positive lift is -normal in the
-         * current coordinate convention.
-         */
 
         const lift =
             Math.sin(
@@ -1127,24 +975,14 @@ export default class Gait {
             leg.planted =
                 true;
 
-            leg.progress =
-                0;
+            leg.progress = 0;
 
-
-            /*
-             * The completed step consumes the accumulated
-             * local travel used to trigger the step.
-             */
 
             this.distanceAccumulator =
                 0;
         }
     }
 
-
-    // =====================================================
-    // IDLE STABILIZATION
-    // =====================================================
 
     _stabilizeIdleLegs() {
 
@@ -1190,10 +1028,6 @@ export default class Gait {
     }
 
 
-    // =====================================================
-    // CHARACTER COMPATIBILITY RESULT
-    // =====================================================
-
     _buildCharacterResult() {
 
         const left =
@@ -1232,38 +1066,28 @@ export default class Gait {
 
             right,
 
-
             leftPlanted:
                 this.legs.left.planted &&
                 !this.legs.left.stepping,
-
 
             rightPlanted:
                 this.legs.right.planted &&
                 !this.legs.right.stepping,
 
-
             leftStepping:
                 this.legs.left.stepping,
-
 
             rightStepping:
                 this.legs.right.stepping,
 
-
             phase:
                 this.phase,
-
 
             stepDemand:
                 this.stepDemand
         };
     }
 
-
-    // =====================================================
-    // SKELETON POSITION ACCESS
-    // =====================================================
 
     _getSkeletonWorldPosition(
         boneName
