@@ -1,14 +1,15 @@
 // ASTRAWAY 2.0
 // Character controller.
 //
-// Architecture:
+// Architecture (Phase 1):
 //
 // Character
 // ├─ Skeleton            = anatomy / hierarchy / rest pose
-// ├─ Gait                = locomotion / foot targets
-// ├─ BodyState           = COM / contacts / balance
-// ├─ SupportConstraint   = support reach / progression permission
-// ├─ FullBodyController  = upper-body procedural pose
+// ├─ Gait                = locomotion / foot targets (WalkPattern)
+// ├─ BodyState           = COM / contacts / balance (facts)
+// ├─ SupportConstraint   = permission / stepDemand
+// ├─ FullBodyController  = upper-body offsets producer
+// ├─ PoseComposer        = единственный writer локальной позы + IK
 // ├─ IK                  = mathematical leg solving
 // └─ Animation           = state machine
 //
@@ -17,9 +18,7 @@
 // - facing
 // - look
 // - root position / root angle
-// - pose orchestration order
-// - leg IK integration
-// - final FK
+// - orchestration order
 //
 // Character does NOT own:
 // - anatomical hierarchy
@@ -27,22 +26,16 @@
 // - upper-body procedural offsets (FullBodyController)
 // - COM / balance math (BodyState)
 // - support constraint math (SupportConstraint)
+// - final local pose writing (PoseComposer)
 // - rendering
 
 import Skeleton from "./Skeleton.js";
-
-import {
-    solveTwoBoneIK
-} from "./IK.js";
-
+import { solveTwoBoneIK } from "./IK.js";
 import Gait from "./Gait.js";
-
 import BodyState from "./BodyState.js";
-
 import SupportConstraint from "./SupportConstraint.js";
-
 import FullBodyController from "./FullBodyController.js";
-
+import PoseComposer from "./PoseComposer.js";
 import AnimationStateMachine, {
     ANIMATION_STATES
 } from "./AnimationStateMachine.js";
@@ -54,358 +47,119 @@ import {
     normalize
 } from "./MathUtils.js";
 
-
 export class Character {
 
     constructor(options = {}) {
 
         this.position = {
-            x:
-                finite(
-                    options.x,
-                    0
-                ),
-
-            y:
-                finite(
-                    options.y,
-                    0
-                )
+            x: finite(options.x, 0),
+            y: finite(options.y, 0)
         };
 
+        this.moveAngle = finite(options.angle, 0);
+        this.lookAngle = this.moveAngle;
+        this.targetMoveAngle = this.moveAngle;
+        this.targetLookAngle = this.lookAngle;
 
-        this.moveAngle =
-            finite(
-                options.angle,
-                0
-            );
+        this.speed = Math.max(1, finite(options.speed, 90));
+        this.turnSpeed = Math.max(0.01, finite(options.turnSpeed, 10));
+        this.lookTurnSpeed = Math.max(0.01, finite(options.lookTurnSpeed, 8));
 
-        this.lookAngle =
-            this.moveAngle;
+        this.velocity = { x: 0, y: 0 };
+        this.travelledDistance = 0;
+        this.isMoving = false;
 
-        this.targetMoveAngle =
-            this.moveAngle;
-
-        this.targetLookAngle =
-            this.lookAngle;
-
-
-        this.speed =
-            Math.max(
-                1,
-                finite(
-                    options.speed,
-                    90
-                )
-            );
-
-
-        this.turnSpeed =
-            Math.max(
-                0.01,
-                finite(
-                    options.turnSpeed,
-                    10
-                )
-            );
-
-
-        this.lookTurnSpeed =
-            Math.max(
-                0.01,
-                finite(
-                    options.lookTurnSpeed,
-                    8
-                )
-            );
-
-
-        this.velocity = {
-            x: 0,
-            y: 0
-        };
-
-
-        this.travelledDistance =
-            0;
-
-        this.isMoving =
-            false;
-
-
-        this.currentSurface =
-            null;
-
-        this.currentSurfaceT =
-            0;
-
+        this.currentSurface = null;
+        this.currentSurfaceT = 0;
 
         this.path = [];
         this.pathIndex = 0;
 
-
-        this.lookTarget =
-            null;
-
+        this.lookTarget = null;
 
         // =================================================
         // CORE SYSTEMS
         // =================================================
 
-        this.skeleton =
-            new Skeleton();
+        this.skeleton = new Skeleton();
 
+        this.gait = new Gait({
+            stepLength: finite(options.stepLength, 30),
+            stepHeight: finite(options.stepHeight, 11),
+            stepDuration: finite(options.stepDuration, 0.18)
+        });
 
-        this.gait =
-            new Gait({
+        this.gait.bindSkeleton(this.skeleton);
 
-                stepLength:
-                    finite(
-                        options.stepLength,
-                        30
-                    ),
+        this.bodyState = new BodyState(this.skeleton);
 
-                stepHeight:
-                    finite(
-                        options.stepHeight,
-                        11
-                    ),
-
-                stepDuration:
-                    finite(
-                        options.stepDuration,
-                        0.18
-                    )
-            });
-
-
-        this.gait.bindSkeleton(
-            this.skeleton
+        this.supportConstraint = new SupportConstraint(
+            this.skeleton,
+            this.gait,
+            {
+                reserve: 0.05,
+                softStart: 0.85
+            }
         );
 
+        this.fullBody = new FullBodyController(
+            this.skeleton,
+            this.bodyState,
+            {
+                gait: this.gait
+            }
+        );
 
-        /*
-         * BodyState owns:
-         * - total mass
-         * - center of mass
-         * - contacts
-         * - support
-         * - balance
-         */
+        this.poseComposer = new PoseComposer(this.skeleton);
 
-        this.bodyState =
-            new BodyState(
-                this.skeleton
-            );
-
-
-        /*
-         * SupportConstraint owns:
-         * - planted-leg reach
-         * - progression permission
-         * - step demand
-         *
-         * It does NOT move Character.
-         * It does NOT move Skeleton.
-         * It does NOT start steps.
-         */
-
-        this.supportConstraint =
-            new SupportConstraint(
-                this.skeleton,
-                this.gait,
-                {
-                    reserve: 0.05,
-                    softStart: 0.85
-                }
-            );
-
-
-        /*
-         * FullBodyController owns:
-         * - torso
-         * - arms
-         * - neck
-         * - head
-         *
-         * Gait is provided as read-only locomotion
-         * state for procedural arm motion.
-         */
-
-        this.fullBody =
-            new FullBodyController(
-                this.skeleton,
-                this.bodyState,
-                {
-                    gait:
-                        this.gait
-                }
-            );
-
-
-        this.animation =
-            new AnimationStateMachine();
-
+        this.animation = new AnimationStateMachine();
 
         this.footTargets = {
-
-            left: {
-                x: 0,
-                y: 0
-            },
-
-            right: {
-                x: 0,
-                y: 0
-            }
+            left: { x: 0, y: 0 },
+            right: { x: 0, y: 0 }
         };
 
+        this.poleLeft = { x: 0, y: 0 };
+        this.poleRight = { x: 0, y: 0 };
 
-        /*
-         * Pole points are currently kept as stable
-         * anatomical references.
-         *
-         * They will later be derived from the
-         * gravity frame / movement frame.
-         */
+        this.initialized = false;
 
-        this.poleLeft = {
-            x: 0,
-            y: 0
-        };
-
-
-        this.poleRight = {
-            x: 0,
-            y: 0
-        };
-
-
-        this.initialized =
-            false;
-
-
-        /*
-         * Anatomical support offset.
-         *
-         * Character.position is the logical position
-         * on the surface.
-         *
-         * Skeleton.root is the anatomical pelvis/root.
-         *
-         * In the current Skeleton rest pose the feet
-         * are approximately 69 world units below the
-         * pelvis, so the root must be raised.
-         *
-         * This is deliberately kept here rather than
-         * inside World / Geometry / Gait.
-         */
-
-        this.rootSupportOffset =
-            finite(
-                options.rootSupportOffset,
-                -69
-            );
+        this.rootSupportOffset = finite(
+            options.rootSupportOffset,
+            -69
+        );
     }
-
 
     // =====================================================
     // INITIALIZATION
     // =====================================================
 
-    initialize(
-        position,
-        surface = null,
-        surfaceT = 0
-    ) {
+    initialize(position, surface = null, surfaceT = 0) {
 
         if (position) {
-
-            this.position.x =
-                finite(
-                    position.x,
-                    this.position.x
-                );
-
-            this.position.y =
-                finite(
-                    position.y,
-                    this.position.y
-                );
+            this.position.x = finite(position.x, this.position.x);
+            this.position.y = finite(position.y, this.position.y);
         }
 
-
-        this.currentSurface =
-            surface;
-
-        this.currentSurfaceT =
-            finite(
-                surfaceT,
-                0
-            );
-
+        this.currentSurface = surface;
+        this.currentSurfaceT = finite(surfaceT, 0);
 
         if (surface) {
-
-            const frame =
-                surface.getFrame(
-                    this.currentSurfaceT
-                );
-
-            this.position.x =
-                frame.position.x;
-
-            this.position.y =
-                frame.position.y;
+            const frame = surface.getFrame(this.currentSurfaceT);
+            this.position.x = frame.position.x;
+            this.position.y = frame.position.y;
         }
 
-
-        /*
-         * Root first.
-         */
-
         this.updateSkeletonBase();
-
-
-        /*
-         * Root placement only.
-         * Upper body is owned by FBC.
-         */
-
-        this.skeleton.setRootAngle(
-            this.moveAngle
-        );
-
-
-        /*
-         * FK is required here because Gait initializes
-         * from the actual ankle world positions.
-         */
-
+        this.skeleton.setRootAngle(this.moveAngle);
         this.skeleton.updateWorldTransforms();
-
-
-        /*
-         * Start procedural systems from a clean state.
-         */
 
         this.fullBody.reset();
         this.bodyState.reset();
         this.supportConstraint.reset();
 
-
-        /*
-         * Gait must read actual ankle positions.
-         */
-
         if (surface) {
-
-            const frame =
-                surface.getFrame(
-                    this.currentSurfaceT
-                );
-
-
+            const frame = surface.getFrame(this.currentSurfaceT);
             this.gait.initialize(
                 this.position,
                 frame.tangent,
@@ -413,39 +167,21 @@ export class Character {
                 surface,
                 this.currentSurfaceT
             );
-
         } else {
-
             this.gait.initialize(
                 this.position,
-
                 {
-                    x:
-                        Math.cos(
-                            this.moveAngle
-                        ),
-
-                    y:
-                        Math.sin(
-                            this.moveAngle
-                        )
+                    x: Math.cos(this.moveAngle),
+                    y: Math.sin(this.moveAngle)
                 },
-
-                {
-                    x: 0,
-                    y: -1
-                },
-
+                { x: 0, y: -1 },
                 null,
                 0
             );
         }
 
-
-        this.initialized =
-            true;
+        this.initialized = true;
     }
-
 
     // =====================================================
     // PATH
@@ -453,81 +189,42 @@ export class Character {
 
     setPath(path) {
 
-        if (
-            !Array.isArray(path)
-        ) {
-
+        if (!Array.isArray(path)) {
             this.path = [];
             this.pathIndex = 0;
             this.isMoving = false;
-
             return;
         }
 
-
-        this.path =
-            path
-                .filter(Boolean)
-                .map(
-                    point => ({
-
-                        x:
-                            finite(
-                                point.x,
-                                0
-                            ),
-
-                        y:
-                            finite(
-                                point.y,
-                                0
-                            ),
-
-                        surface:
-                            point.surface ||
-                            null,
-
-                        t:
-                            finite(
-                                point.t,
-                                0
-                            )
-                    })
-                );
-
+        this.path = path
+            .filter(Boolean)
+            .map(point => ({
+                x: finite(point.x, 0),
+                y: finite(point.y, 0),
+                surface: point.surface || null,
+                t: finite(point.t, 0)
+            }));
 
         this.pathIndex = 0;
-
-
-        this.isMoving =
-            this.path.length > 0;
-
+        this.isMoving = this.path.length > 0;
 
         this.animation.setState(
-
             this.isMoving
                 ? ANIMATION_STATES.WALK
                 : ANIMATION_STATES.IDLE
         );
     }
 
-
     clearPath() {
 
         this.path = [];
         this.pathIndex = 0;
-
         this.isMoving = false;
-
         this.velocity.x = 0;
         this.velocity.y = 0;
 
-
-        this.animation.setState(
-            ANIMATION_STATES.IDLE
-        );
+        this.animation.setState(ANIMATION_STATES.IDLE);
     }
-
 
     // =====================================================
     // LOOK
@@ -536,98 +233,43 @@ export class Character {
     setLookTarget(target) {
 
         if (!target) {
-
-            this.lookTarget =
-                null;
-
+            this.lookTarget = null;
             return;
         }
 
-
         this.lookTarget = {
-
-            x:
-                finite(
-                    target.x,
-                    this.position.x
-                ),
-
-            y:
-                finite(
-                    target.y,
-                    this.position.y
-                )
+            x: finite(target.x, this.position.x),
+            y: finite(target.y, this.position.y)
         };
     }
 
-
     clearLookTarget() {
 
-        this.lookTarget =
-            null;
-
-        this.targetLookAngle =
-            this.moveAngle;
+        this.lookTarget = null;
+        this.targetLookAngle = this.moveAngle;
     }
-
 
     // =====================================================
     // SURFACE
     // =====================================================
 
-    setSurface(
-        surface,
-        t = 0
-    ) {
+    setSurface(surface, t = 0) {
 
-        this.currentSurface =
-            surface;
-
-        this.currentSurfaceT =
-            finite(
-                t,
-                0
-            );
-
+        this.currentSurface = surface;
+        this.currentSurfaceT = finite(t, 0);
 
         if (!surface) {
             return;
         }
 
+        const frame = surface.getFrame(this.currentSurfaceT);
 
-        const frame =
-            surface.getFrame(
-                this.currentSurfaceT
-            );
-
-
-        this.position.x =
-            frame.position.x;
-
-        this.position.y =
-            frame.position.y;
-
-
-        /*
-         * Root placement uses the anatomical support
-         * offset through updateSkeletonBase().
-         */
+        this.position.x = frame.position.x;
+        this.position.y = frame.position.y;
 
         this.updateSkeletonBase();
-
-
-        this.skeleton.setRootAngle(
-            this.moveAngle
-        );
-
-
-        /*
-         * Gait initialization needs valid world
-         * ankle positions after moving the root.
-         */
-
+        this.skeleton.setRootAngle(this.moveAngle);
         this.skeleton.updateWorldTransforms();
-
 
         this.gait.initialize(
             this.position,
@@ -637,813 +279,330 @@ export class Character {
             this.currentSurfaceT
         );
 
-
-        /*
-         * Surface transition invalidates the previous
-         * support constraint state.
-         */
-
         this.supportConstraint.reset();
     }
 
-
     updateSurfaceFromPathPoint(point) {
 
-        if (
-            !point ||
-            !point.surface
-        ) {
+        if (!point || !point.surface) {
             return;
         }
 
-
-        if (
-            point.surface !==
-            this.currentSurface
-        ) {
-
-            this.setSurface(
-                point.surface,
-                point.t
-            );
+        if (point.surface !== this.currentSurface) {
+            this.setSurface(point.surface, point.t);
         }
     }
 
-
     // =====================================================
-    // UPDATE
+    // UPDATE — PHASE A (DECISION) + PHASE B (MEASURE)
     // =====================================================
 
     update(dt) {
 
-        const safeDt =
-            Math.max(
-                0,
-                finite(dt, 0)
-            );
-
+        const safeDt = Math.max(0, finite(dt, 0));
 
         if (!this.initialized) {
             return;
         }
 
+        this.animation.update(safeDt);
 
-        this.animation.update(
-            safeDt
-        );
-
-
-        const previousX =
-            this.position.x;
-
-        const previousY =
-            this.position.y;
-
+        const previousX = this.position.x;
+        const previousY = this.position.y;
 
         // -------------------------------------------------
-        // MOVEMENT
+        // PHASE A — DECISION
         // -------------------------------------------------
 
-        /*
-         * Use the permission calculated on the previous
-         * frame.
-         *
-         * This avoids a circular dependency:
-         *
-         * movement → support → movement
-         *
-         * Current support is evaluated later in this frame
-         * and becomes movement permission for the next frame.
-         */
-
+        // 1-3. Movement × permission (N-1)
         const progressionPermission =
             this.supportConstraint.getPermission();
 
+        this.updateMovement(safeDt, progressionPermission);
 
-        this.updateMovement(
-            safeDt,
-            progressionPermission
-        );
+        const dx = this.position.x - previousX;
+        const dy = this.position.y - previousY;
+        const frameDistance = Math.hypot(dx, dy);
 
+        this.travelledDistance += frameDistance;
 
-        const dx =
-            this.position.x -
-            previousX;
+        // 4. Facing / Look
+        this.updateDirection(safeDt, dx, dy);
+        this.updateLook(safeDt);
 
-        const dy =
-            this.position.y -
-            previousY;
-
-
-        const frameDistance =
-            Math.hypot(
-                dx,
-                dy
-            );
-
-
-        this.travelledDistance +=
-            frameDistance;
-
-
-        // -------------------------------------------------
-        // FACING / LOOK
-        // -------------------------------------------------
-
-        this.updateDirection(
-            safeDt,
-            dx,
-            dy
-        );
-
-
-        this.updateLook(
-            safeDt
-        );
-
-
-        // -------------------------------------------------
-        // ROOT
-        // -------------------------------------------------
-
-        /*
-         * Character owns only root placement.
-         *
-         * FBC owns upper body.
-         * Gait + IK own legs.
-         */
-
+        // 5. Root
         this.updateSkeletonBase();
-
-
-        /*
-         * Root has changed.
-         *
-         * Update world transforms before systems that
-         * read world-space skeleton data.
-         */
-
         this.skeleton.updateWorldTransforms();
 
+        // 6. Gait → MotionTargets
+        const gaitResult = this.updateGait(safeDt, frameDistance);
+
+        // 7. FullBodyController → upperBodyOffsets (producer)
+        const instantSpeed = Math.hypot(
+            this.velocity.x,
+            this.velocity.y
+        );
+
+        const upperBodyOffsets = this.fullBody.update(safeDt, {
+            speed: instantSpeed,
+            isMoving: this.isMoving,
+            moveAngle: this.moveAngle,
+            lookAngle: this.lookAngle
+        });
+
+        // 8. PoseComposer — единственный writer + IK
+        this.poseComposer.compose({
+            motionTargets: {
+                left: gaitResult.left,
+                right: gaitResult.right
+            },
+            upperBodyOffsets,
+            poleLeft: this.poleLeft,
+            poleRight: this.poleRight
+        });
+
+        // 9. Final FK
+        this.skeleton.updateWorldTransforms();
 
         // -------------------------------------------------
-        // GAIT
+        // PHASE B — MEASURE (после финальной позы)
         // -------------------------------------------------
 
-        /*
-         * Gait creates / updates foot targets and
-         * step state.
-         */
+        // 10. Actual contact measurement from final world pose
+        const leftFoot = this.skeleton.getBone("ankleL") ||
+                         this.skeleton.getBone("footL");
+        const rightFoot = this.skeleton.getBone("ankleR") ||
+                          this.skeleton.getBone("footR");
 
-        const gaitResult =
-            this.updateGait(
-                safeDt,
-                frameDistance
-            );
+        const leftPoint = leftFoot
+            ? { x: leftFoot.worldX, y: leftFoot.worldY }
+            : gaitResult.left;
 
+        const rightPoint = rightFoot
+            ? { x: rightFoot.worldX, y: rightFoot.worldY }
+            : gaitResult.right;
 
-        // -------------------------------------------------
-        // FOOT CONTACT / WEIGHT
-        // -------------------------------------------------
-
-        const leftPlanted =
-            gaitResult.leftPlanted;
-
-        const rightPlanted =
-            gaitResult.rightPlanted;
-
+        // Gait planted = intent, но точку берём из финальной позы
+        const leftPlanted = !!gaitResult.leftPlanted;
+        const rightPlanted = !!gaitResult.rightPlanted;
 
         this.bodyState.setFootContact(
             "left",
             leftPlanted,
-            gaitResult.left
+            leftPoint
         );
-
-
-        this.bodyState.setFootPlanted(
-            "left",
-            leftPlanted
-        );
-
+        this.bodyState.setFootPlanted("left", leftPlanted);
 
         this.bodyState.setFootContact(
             "right",
             rightPlanted,
-            gaitResult.right
+            rightPoint
         );
-
-
-        this.bodyState.setFootPlanted(
-            "right",
-            rightPlanted
-        );
-
+        this.bodyState.setFootPlanted("right", rightPlanted);
 
         let leftWeight = 0;
         let rightWeight = 0;
 
-
-        if (
-            leftPlanted &&
-            rightPlanted
-        ) {
-
+        if (leftPlanted && rightPlanted) {
             leftWeight = 0.5;
             rightWeight = 0.5;
-
         } else if (leftPlanted) {
-
             leftWeight = 1.0;
-            rightWeight = 0.0;
-
         } else if (rightPlanted) {
-
-            leftWeight = 0.0;
             rightWeight = 1.0;
         }
 
+        this.bodyState.setFootWeight(leftWeight, rightWeight);
 
-        this.bodyState.setFootWeight(
-            leftWeight,
-            rightWeight
-        );
-
-
-        // -------------------------------------------------
-        // BODY STATE
-        // -------------------------------------------------
-
-        /*
-         * BodyState computes COM / balance from the
-         * current Skeleton world transforms.
-         */
-
+        // 11. BodyState (facts from final pose)
         this.bodyState.update();
 
+        // 12. SupportConstraint → permission / stepDemand for N+1
+        const supportState = this.supportConstraint.update();
 
-        // -------------------------------------------------
-        // SUPPORT CONSTRAINT
-        // -------------------------------------------------
-
-        /*
-         * Evaluate support after the current body/gait
-         * state exists.
-         *
-         * The permission affects the NEXT movement frame.
-         *
-         * Step demand is passed to Gait immediately,
-         * therefore it can affect the NEXT Gait update.
-         */
-
-        const supportState =
-            this.supportConstraint.update();
-
-
-        this.gait.setStepDemand(
-            supportState.stepDemand
-        );
-
-
-        // -------------------------------------------------
-        // FULL BODY
-        // -------------------------------------------------
-
-        const instantSpeed =
-            Math.hypot(
-                this.velocity.x,
-                this.velocity.y
-            );
-
-
-        this.fullBody.update(
-            safeDt,
-            {
-                speed:
-                    instantSpeed,
-
-                isMoving:
-                    this.isMoving,
-
-                moveAngle:
-                    this.moveAngle,
-
-                lookAngle:
-                    this.lookAngle
-            }
-        );
-
-
-        /*
-         * FBC has now changed upper-body local angles.
-         *
-         * Update world transforms so IK receives
-         * the current complete pre-IK pose.
-         */
-
-        this.skeleton.updateWorldTransforms();
-
-
-        // -------------------------------------------------
-        // LEG IK
-        // -------------------------------------------------
-
-        /*
-         * IK modifies only leg joint angles.
-         *
-         * Skeleton.setWorldBoneAngle() currently performs
-         * its own FK internally. This is intentional for
-         * compatibility with the existing Skeleton API.
-         */
-
-        this.applyLegIK(
-            gaitResult
-        );
-
-
-        // -------------------------------------------------
-        // FINAL FK
-        // -------------------------------------------------
-
-        /*
-         * Final authoritative world pose for the frame.
-         */
-
-        this.skeleton.updateWorldTransforms();
+        if (typeof this.gait.setStepDemand === "function") {
+            this.gait.setStepDemand(supportState.stepDemand);
+        }
     }
-
 
     // =====================================================
     // MOVEMENT
     // =====================================================
 
-    updateMovement(
-        dt,
-        progressionPermission = 1
-    ) {
+    updateMovement(dt, progressionPermission = 1) {
 
         if (
             !this.isMoving ||
-            this.pathIndex >=
-            this.path.length
+            this.pathIndex >= this.path.length
         ) {
-
             this.velocity.x = 0;
             this.velocity.y = 0;
-
             this.isMoving = false;
 
-
-            if (
-                !this.animation.is(
-                    ANIMATION_STATES.IDLE
-                )
-            ) {
-
-                this.animation.setState(
-                    ANIMATION_STATES.IDLE
-                );
+            if (!this.animation.is(ANIMATION_STATES.IDLE)) {
+                this.animation.setState(ANIMATION_STATES.IDLE);
             }
-
-
             return;
         }
 
-
-        const waypoint =
-            this.path[
-                this.pathIndex
-            ];
-
-
-        /*
-         * Requested movement is scaled by the support
-         * permission.
-         *
-         * SupportConstraint remains the calculator.
-         * Character remains the movement owner.
-         */
+        const waypoint = this.path[this.pathIndex];
 
         const stepDistance =
             this.speed *
             dt *
-            clamp01(
-                finite(
-                    progressionPermission,
-                    1
-                )
-            );
+            clamp01(finite(progressionPermission, 1));
 
-
-        // -------------------------------------------------
         // SAME SURFACE
-        // -------------------------------------------------
-
         if (
             waypoint.surface &&
-            waypoint.surface ===
-            this.currentSurface
+            waypoint.surface === this.currentSurface
         ) {
+            const surface = this.currentSurface;
+            const targetT = Math.max(0, Math.min(1, waypoint.t));
+            const currentT = Math.max(0, Math.min(1, this.currentSurfaceT));
 
-            const surface =
-                this.currentSurface;
+            const currentDistance = surface.tToDistance(currentT);
+            const targetDistance = surface.tToDistance(targetT);
+            const remaining = targetDistance - currentDistance;
 
+            if (Math.abs(remaining) <= Math.max(0.001, stepDistance)) {
 
-            const targetT =
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
-                        waypoint.t
-                    )
-                );
-
-
-            const currentT =
-                Math.max(
-                    0,
-                    Math.min(
-                        1,
-                        this.currentSurfaceT
-                    )
-                );
-
-
-            const currentDistance =
-                surface.tToDistance(
-                    currentT
-                );
-
-
-            const targetDistance =
-                surface.tToDistance(
-                    targetT
-                );
-
-
-            const remaining =
-                targetDistance -
-                currentDistance;
-
-
-            if (
-                Math.abs(
-                    remaining
-                ) <=
-                Math.max(
-                    0.001,
-                    stepDistance
-                )
-            ) {
-
-                const frame =
-                    surface.getFrame(
-                        targetT
-                    );
-
-
-                this.position.x =
-                    frame.position.x;
-
-                this.position.y =
-                    frame.position.y;
-
-                this.currentSurfaceT =
-                    targetT;
-
-
+                const frame = surface.getFrame(targetT);
+                this.position.x = frame.position.x;
+                this.position.y = frame.position.y;
+                this.currentSurfaceT = targetT;
                 this.velocity.x = 0;
                 this.velocity.y = 0;
-
-
                 this.pathIndex++;
 
-
-                if (
-                    this.pathIndex >=
-                    this.path.length
-                ) {
-
+                if (this.pathIndex >= this.path.length) {
                     this.clearPath();
                 }
-
-
                 return;
             }
 
-
-            const directionT =
-                remaining > 0
-                    ? 1
-                    : -1;
-
-
-            const nextDistance =
-                currentDistance +
-                directionT *
-                stepDistance;
-
-
-            const nextT =
-                surface.distanceToT(
-                    nextDistance
-                );
-
-
-            const frame =
-                surface.getFrame(
-                    nextT
-                );
-
+            const directionT = remaining > 0 ? 1 : -1;
+            const nextDistance = currentDistance + directionT * stepDistance;
+            const nextT = surface.distanceToT(nextDistance);
+            const frame = surface.getFrame(nextT);
 
             const previous = {
-
-                x:
-                    this.position.x,
-
-                y:
-                    this.position.y
+                x: this.position.x,
+                y: this.position.y
             };
 
+            this.position.x = frame.position.x;
+            this.position.y = frame.position.y;
+            this.currentSurfaceT = nextT;
 
-            this.position.x =
-                frame.position.x;
+            const moveDx = this.position.x - previous.x;
+            const moveDy = this.position.y - previous.y;
+            const actualStep = Math.hypot(moveDx, moveDy);
 
-            this.position.y =
-                frame.position.y;
-
-
-            this.currentSurfaceT =
-                nextT;
-
-
-            const moveDx =
-                this.position.x -
-                previous.x;
-
-            const moveDy =
-                this.position.y -
-                previous.y;
-
-
-            const actualStep =
-                Math.hypot(
-                    moveDx,
-                    moveDy
-                );
-
-
-            if (
-                actualStep >
-                0.000001 &&
-                dt >
-                0.000001
-            ) {
-
-                this.velocity.x =
-                    moveDx / dt;
-
-                this.velocity.y =
-                    moveDy / dt;
-
+            if (actualStep > 0.000001 && dt > 0.000001) {
+                this.velocity.x = moveDx / dt;
+                this.velocity.y = moveDy / dt;
             } else {
-
-                this.velocity.x =
-                    frame.tangent.x *
-                    this.speed *
-                    directionT;
-
-                this.velocity.y =
-                    frame.tangent.y *
-                    this.speed *
-                    directionT;
+                this.velocity.x = frame.tangent.x * this.speed * directionT;
+                this.velocity.y = frame.tangent.y * this.speed * directionT;
             }
 
-
-            this.targetMoveAngle =
-                Math.atan2(
-                    frame.tangent.y *
-                    directionT,
-
-                    frame.tangent.x *
-                    directionT
-                );
-
-
+            this.targetMoveAngle = Math.atan2(
+                frame.tangent.y * directionT,
+                frame.tangent.x * directionT
+            );
             return;
         }
 
-
-        // -------------------------------------------------
         // SURFACE TRANSITION
-        // -------------------------------------------------
-
         if (
             waypoint.surface &&
-            waypoint.surface !==
-            this.currentSurface
+            waypoint.surface !== this.currentSurface
         ) {
-
-            this.setSurface(
-                waypoint.surface,
-                waypoint.t
-            );
-
-
+            this.setSurface(waypoint.surface, waypoint.t);
             this.pathIndex++;
 
-
-            if (
-                this.pathIndex >=
-                this.path.length
-            ) {
-
+            if (this.pathIndex >= this.path.length) {
                 this.clearPath();
             }
-
-
             return;
         }
 
-
-        // -------------------------------------------------
         // FREE MOVEMENT
-        // -------------------------------------------------
+        const dx = waypoint.x - this.position.x;
+        const dy = waypoint.y - this.position.y;
+        const d = Math.hypot(dx, dy);
 
-        const dx =
-            waypoint.x -
-            this.position.x;
+        if (d <= Math.max(4, stepDistance)) {
 
-        const dy =
-            waypoint.y -
-            this.position.y;
-
-
-        const d =
-            Math.hypot(
-                dx,
-                dy
-            );
-
-
-        if (
-            d <=
-            Math.max(
-                4,
-                stepDistance
-            )
-        ) {
-
-            this.position.x =
-                waypoint.x;
-
-            this.position.y =
-                waypoint.y;
-
-
+            this.position.x = waypoint.x;
+            this.position.y = waypoint.y;
             this.pathIndex++;
 
-
-            if (
-                this.pathIndex >=
-                this.path.length
-            ) {
-
+            if (this.pathIndex >= this.path.length) {
                 this.clearPath();
             }
-
-
             return;
         }
 
+        const direction = normalize(
+            dx,
+            dy,
+            Math.cos(this.moveAngle),
+            Math.sin(this.moveAngle)
+        );
 
-        const direction =
-            normalize(
-                dx,
-                dy,
-                Math.cos(
-                    this.moveAngle
-                ),
-                Math.sin(
-                    this.moveAngle
-                )
-            );
+        const step = Math.min(stepDistance, d);
 
+        this.velocity.x = direction.x * this.speed;
+        this.velocity.y = direction.y * this.speed;
 
-        const step =
-            Math.min(
-                stepDistance,
-                d
-            );
+        this.position.x += direction.x * step;
+        this.position.y += direction.y * step;
 
-
-        this.velocity.x =
-            direction.x *
-            this.speed;
-
-        this.velocity.y =
-            direction.y *
-            this.speed;
-
-
-        this.position.x +=
-            direction.x *
-            step;
-
-        this.position.y +=
-            direction.y *
-            step;
-
-
-        this.targetMoveAngle =
-            Math.atan2(
-                direction.y,
-                direction.x
-            );
+        this.targetMoveAngle = Math.atan2(direction.y, direction.x);
     }
 
-
     // =====================================================
-    // DIRECTION
+    // DIRECTION / LOOK
     // =====================================================
 
-    updateDirection(
-        dt,
-        dx,
-        dy
-    ) {
+    updateDirection(dt, dx, dy) {
 
-        if (
-            Math.abs(dx) >
-            0.0001 ||
-            Math.abs(dy) >
-            0.0001
-        ) {
-
-            this.targetMoveAngle =
-                Math.atan2(
-                    dy,
-                    dx
-                );
+        if (Math.abs(dx) > 0.0001 || Math.abs(dy) > 0.0001) {
+            this.targetMoveAngle = Math.atan2(dy, dx);
         }
 
-
-        this.moveAngle =
-            dampAngle(
-                this.moveAngle,
-                this.targetMoveAngle,
-                this.turnSpeed,
-                dt
-            );
+        this.moveAngle = dampAngle(
+            this.moveAngle,
+            this.targetMoveAngle,
+            this.turnSpeed,
+            dt
+        );
     }
-
-
-    // =====================================================
-    // LOOK
-    // =====================================================
 
     updateLook(dt) {
 
         if (this.lookTarget) {
 
-            const dx =
-                this.lookTarget.x -
-                this.position.x;
+            const dx = this.lookTarget.x - this.position.x;
+            const dy = this.lookTarget.y - this.position.y;
 
-            const dy =
-                this.lookTarget.y -
-                this.position.y;
-
-
-            if (
-                Math.abs(dx) >
-                0.001 ||
-                Math.abs(dy) >
-                0.001
-            ) {
-
-                this.targetLookAngle =
-                    Math.atan2(
-                        dy,
-                        dx
-                    );
+            if (Math.abs(dx) > 0.001 || Math.abs(dy) > 0.001) {
+                this.targetLookAngle = Math.atan2(dy, dx);
             }
 
         } else {
-
-            this.targetLookAngle =
-                this.moveAngle;
+            this.targetLookAngle = this.moveAngle;
         }
 
-
-        this.lookAngle =
-            dampAngle(
-                this.lookAngle,
-                this.targetLookAngle,
-                this.lookTurnSpeed,
-                dt
-            );
+        this.lookAngle = dampAngle(
+            this.lookAngle,
+            this.targetLookAngle,
+            this.lookTurnSpeed,
+            dt
+        );
     }
-
 
     // =====================================================
     // BASE POSE
@@ -1451,378 +610,87 @@ export class Character {
 
     updateSkeletonBase() {
 
-        /*
-         * Character.position = логическая позиция
-         * опорной точки на поверхности.
-         *
-         * Skeleton.root = анатомический центр
-         * персонажа.
-         *
-         * В текущей rest pose (позе покоя)
-         * стопы находятся примерно на 69 world units
-         * ниже pelvis.
-         *
-         * Поэтому root должен находиться выше поверхности.
-         */
+        const rootX = this.position.x;
+        const rootY = this.position.y + this.rootSupportOffset;
 
-        const rootX =
-            this.position.x;
-
-        const rootY =
-            this.position.y +
-            this.rootSupportOffset;
-
-
-        this.skeleton.setRootPosition(
-            rootX,
-            rootY
-        );
-
-
-        this.skeleton.setRootAngle(
-            0
-        );
+        this.skeleton.setRootPosition(rootX, rootY);
+        this.skeleton.setRootAngle(0);
     }
-
 
     // =====================================================
     // GAIT
     // =====================================================
 
-    updateGait(
-        dt,
-        frameDistance
-    ) {
+    updateGait(dt, frameDistance) {
 
         let tangent = {
-
-            x:
-                Math.cos(
-                    this.moveAngle
-                ),
-
-            y:
-                Math.sin(
-                    this.moveAngle
-                )
+            x: Math.cos(this.moveAngle),
+            y: Math.sin(this.moveAngle)
         };
-
 
         let normal = {
-
-            x:
-                -tangent.y,
-
-            y:
-                tangent.x
+            x: -tangent.y,
+            y: tangent.x
         };
 
-
-        if (
-            this.currentSurface
-        ) {
-
-            const frame =
-                this.currentSurface.getFrame(
-                    this.currentSurfaceT
-                );
-
-
-            tangent =
-                frame.tangent;
-
-            normal =
-                frame.normal;
+        if (this.currentSurface) {
+            const frame = this.currentSurface.getFrame(
+                this.currentSurfaceT
+            );
+            tangent = frame.tangent;
+            normal = frame.normal;
         }
 
-
-        const result =
-            this.gait.update(
-                dt,
-                frameDistance,
-                this.position,
-                tangent,
-                normal,
-                this.currentSurface,
-                this.currentSurfaceT,
-                this.isMoving
-            );
-
+        const result = this.gait.update(
+            dt,
+            frameDistance,
+            this.position,
+            tangent,
+            normal,
+            this.currentSurface,
+            this.currentSurfaceT,
+            this.isMoving
+        );
 
         this.footTargets.left = {
-
-            x:
-                result.left.x,
-
-            y:
-                result.left.y
+            x: result.left.x,
+            y: result.left.y
         };
-
 
         this.footTargets.right = {
-
-            x:
-                result.right.x,
-
-            y:
-                result.right.y
+            x: result.right.x,
+            y: result.right.y
         };
-
 
         return result;
     }
-
-
-    // =====================================================
-    // LEG IK
-    // =====================================================
-
-    applyLegIK(gaitResult) {
-
-        if (!gaitResult) {
-            return;
-        }
-
-
-        this.solveLeg(
-
-            "thighL",
-            "shinL",
-            "ankleL",
-
-            gaitResult.left,
-
-            this.poleLeft
-        );
-
-
-        this.solveLeg(
-
-            "thighR",
-            "shinR",
-            "ankleR",
-
-            gaitResult.right,
-
-            this.poleRight
-        );
-    }
-
-
-    solveLeg(
-        thighName,
-        shinName,
-        ankleName,
-        target,
-        pole
-    ) {
-
-        const thigh =
-            this.skeleton.getBone(
-                thighName
-            );
-
-        const shin =
-            this.skeleton.getBone(
-                shinName
-            );
-
-        const ankle =
-            this.skeleton.getBone(
-                ankleName
-            );
-
-
-        if (
-            !thigh ||
-            !shin ||
-            !ankle
-        ) {
-
-            return;
-        }
-
-
-        const upperLength =
-            this.skeleton.getAnatomicalLength(
-                thighName
-            );
-
-
-        const lowerLength =
-            this.skeleton.getAnatomicalLength(
-                shinName
-            );
-
-
-        /*
-         * Hip is the actual thigh origin
-         * from the current world pose.
-         */
-
-        const hipPosition = {
-
-            x:
-                thigh.worldX,
-
-            y:
-                thigh.worldY
-        };
-
-
-        const result =
-            solveTwoBoneIK(
-
-                hipPosition,
-
-                target,
-
-                upperLength,
-
-                lowerLength,
-
-                pole,
-
-                {
-                    minReach: 1
-                }
-            );
-
-
-        /*
-         * IK changes only orientations.
-         *
-         * Skeleton.setWorldBoneAngle() converts the
-         * world angle into local space and immediately
-         * refreshes world transforms.
-         */
-
-        this.skeleton.setWorldBoneAngle(
-
-            thighName,
-
-            result.hipAngle
-        );
-
-
-        this.skeleton.setWorldBoneAngle(
-
-            shinName,
-
-            result.kneeAngle
-        );
-
-
-        /*
-         * Foot stays physically attached to ankle.
-         *
-         * It receives its anatomical rest orientation.
-         * Its position is never teleported.
-         */
-
-        const footName =
-            thighName === "thighL"
-                ? "footL"
-                : "footR";
-
-
-        const foot =
-            this.skeleton.getBone(
-                footName
-            );
-
-
-        if (foot) {
-
-            foot.localAngle =
-                foot.restAngle;
-        }
-
-
-        /*
-         * Keep current Skeleton behaviour.
-         *
-         * setWorldBoneAngle() already performs FK,
-         * and this explicit pass preserves the existing
-         * Character / IK behaviour.
-         */
-
-        this.skeleton.updateWorldTransforms();
-    }
-
 
     // =====================================================
     // PUBLIC MOVEMENT
     // =====================================================
 
-    moveTo(
-        target,
-        duration = 0
-    ) {
+    moveTo(target, duration = 0) {
 
-        if (!target) {
-            return;
+        if (!target) return;
+
+        const dx = target.x - this.position.x;
+        const dy = target.y - this.position.y;
+        const d = Math.hypot(dx, dy);
+
+        if (d < 0.001) return;
+
+        if (duration > 0) {
+            this.speed = d / duration;
         }
 
-
-        const dx =
-            target.x -
-            this.position.x;
-
-        const dy =
-            target.y -
-            this.position.y;
-
-
-        const d =
-            Math.hypot(
-                dx,
-                dy
-            );
-
-
-        if (
-            d <
-            0.001
-        ) {
-
-            return;
-        }
-
-
-        if (
-            duration >
-            0
-        ) {
-
-            this.speed =
-                d /
-                duration;
-        }
-
-
-        this.targetMoveAngle =
-            Math.atan2(
-                dy,
-                dx
-            );
-
-
-        this.isMoving =
-            true;
-
-
-        this.animation.setState(
-            ANIMATION_STATES.WALK
-        );
+        this.targetMoveAngle = Math.atan2(dy, dx);
+        this.isMoving = true;
+        this.animation.setState(ANIMATION_STATES.WALK);
     }
-
 
     stop() {
-
         this.clearPath();
     }
-
 
     // =====================================================
     // RESET
@@ -1832,198 +700,81 @@ export class Character {
 
         this.position.x = 0;
         this.position.y = 0;
-
-
         this.moveAngle = 0;
         this.lookAngle = 0;
-
-
         this.targetMoveAngle = 0;
         this.targetLookAngle = 0;
-
-
         this.velocity.x = 0;
         this.velocity.y = 0;
-
-
-        this.travelledDistance =
-            0;
-
-
+        this.travelledDistance = 0;
         this.path = [];
         this.pathIndex = 0;
-
-
-        this.currentSurface =
-            null;
-
-        this.currentSurfaceT =
-            0;
-
-
-        this.lookTarget =
-            null;
-
-
-        this.isMoving =
-            false;
-
+        this.currentSurface = null;
+        this.currentSurfaceT = 0;
+        this.lookTarget = null;
+        this.isMoving = false;
 
         this.gait.reset();
-
         this.animation.reset();
-
-
-        /*
-         * Reset procedural state before restoring
-         * anatomical rest pose.
-         */
-
         this.bodyState.reset();
-
         this.supportConstraint.reset();
-
         this.fullBody.reset();
 
-
-        /*
-         * Reset to true anatomical rest pose.
-         */
-
         this.skeleton.resetPose();
-
-
-        this.skeleton.setRootPosition(
-            0,
-            0
-        );
-
-
-        this.skeleton.setRootAngle(
-            0
-        );
-
-
+        this.skeleton.setRootPosition(0, 0);
+        this.skeleton.setRootAngle(0);
         this.skeleton.updateWorldTransforms();
 
-
-        this.initialized =
-            false;
+        this.initialized = false;
     }
-
 
     // =====================================================
     // STATE
     // =====================================================
 
     getState() {
-
         return this.animation.getState();
     }
 
-
     getWorldPosition() {
-
         return {
-
-            x:
-                this.position.x,
-
-            y:
-                this.position.y
+            x: this.position.x,
+            y: this.position.y
         };
     }
-
 
     getVelocity() {
-
         return {
-
-            x:
-                this.velocity.x,
-
-            y:
-                this.velocity.y
+            x: this.velocity.x,
+            y: this.velocity.y
         };
     }
-
-
-    getFootTargets() {
-
-        return {
-
-            left: {
-
-                x:
-                    this.footTargets.left.x,
-
-                y:
-                    this.footTargets.left.y
-            },
-
-            right: {
-
-                x:
-                    this.footTargets.right.x,
-
-                y:
-                    this.footTargets.right.y
-            }
-        };
-    }
-
-
-    // =====================================================
-    // VALIDATION
-    // =====================================================
 
     validate() {
 
-        const skeleton =
-            this.skeleton.validate();
+        const skeleton = this.skeleton.validate
+            ? this.skeleton.validate()
+            : { valid: true };
 
-
-        const gait =
-            this.gait.validate();
-
+        const gait = this.gait.validate
+            ? this.gait.validate()
+            : { valid: true };
 
         return {
-
             valid:
-
                 skeleton.valid &&
-
                 gait.valid &&
-
-                Number.isFinite(
-                    this.position.x
-                ) &&
-
-                Number.isFinite(
-                    this.position.y
-                ),
-
-
+                Number.isFinite(this.position.x) &&
+                Number.isFinite(this.position.y),
             skeleton,
-
             gait,
-
-
             position: {
-
-                x:
-                    this.position.x,
-
-                y:
-                    this.position.y
+                x: this.position.x,
+                y: this.position.y
             },
-
-
-            state:
-                this.animation.snapshot()
+            state: this.animation.snapshot()
         };
     }
 }
-
 
 export default Character;
