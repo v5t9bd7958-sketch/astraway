@@ -1,33 +1,10 @@
 // ASTRAWAY
 // FullBodyController
 //
-// Владелец процедурной позы верхней части тела.
+// Producer additive upper-body offsets.
 //
-// Ответственность:
-// - позвоночник
-// - грудная клетка
-// - руки
-// - предплечья
-// - шея
-// - голова
-//
-// НЕ отвечает за:
-// - перемещение персонажа
-// - FK
-// - IK ног
-// - построение поверхности
-// - навигацию
-//
-// Получает состояние от:
-// Character → движение
-// Gait → фаза шага
-// BodyState → баланс / распределение веса
-// GravityFrame → ориентация относительно поверхности
-//
-// Важно:
-// FBC изменяет только localAngle.
-// FK выполняется Character после FBC.
-// -----------------------------------------------------
+// Больше НЕ пишет bone.localAngle.
+// Возвращает offsets, которые применяет PoseComposer.
 
 import {
     clamp,
@@ -37,51 +14,40 @@ import {
     shortestAngleDelta
 } from "./MathUtils.js";
 
-
 const DEFAULTS = {
 
-    // Тело
     forwardLean: 0.12,
     lateralBalance: 0.10,
     accelerationLean: 0.045,
     torsoCounter: 0.045,
 
-    // Походка
     torsoRhythm: 0.065,
     shoulderCounter: 0.055,
 
-    // Руки
     armSwing: 0.48,
     armSwingMin: 0.035,
 
-    // Локти
     elbowFlex: 0.22,
     elbowBase: 0.10,
 
-    // Голова
     neckLook: 0.20,
     headLook: 0.48,
     headStabilize: 0.20,
 
-    // Сглаживание
     intensityDamp: 8,
     accelerationDamp: 7,
     torsoDamp: 12,
     armDamp: 14,
     headDamp: 15,
 
-    // Ограничения
     maxSpine: 0.42,
     maxArm: 0.65,
     maxHead: 0.60,
 
-    // Баланс
     unstableBoost: 1.25,
 
-    // Скорость полного выражения походки
     speedForFullIntensity: 90
 };
-
 
 export default class FullBodyController {
 
@@ -103,7 +69,6 @@ export default class FullBodyController {
             );
         }
 
-
         const {
             gravityFrame = null,
             gait = null,
@@ -111,19 +76,10 @@ export default class FullBodyController {
             ...directTuning
         } = options || {};
 
-
-        this.skeleton =
-            skeleton;
-
-        this.bodyState =
-            bodyState;
-
-        this.gravityFrame =
-            gravityFrame;
-
-        this.gait =
-            gait;
-
+        this.skeleton = skeleton;
+        this.bodyState = bodyState;
+        this.gravityFrame = gravityFrame;
+        this.gait = gait;
 
         this.tuning = {
             ...DEFAULTS,
@@ -131,49 +87,20 @@ export default class FullBodyController {
             ...tuning
         };
 
-
-        // -------------------------------------------------
-        // Кости, которыми владеет FBC
-        // -------------------------------------------------
-
         this.bones = {
-
-            spineLower:
-                skeleton.getBone("spineLower"),
-
-            spineMid:
-                skeleton.getBone("spineMid"),
-
-            spineUpper:
-                skeleton.getBone("spineUpper"),
-
-            chest:
-                skeleton.getBone("chest"),
-
-            upperArmL:
-                skeleton.getBone("upperArmL"),
-
-            upperArmR:
-                skeleton.getBone("upperArmR"),
-
-            forearmL:
-                skeleton.getBone("forearmL"),
-
-            forearmR:
-                skeleton.getBone("forearmR"),
-
-            neck:
-                skeleton.getBone("neck"),
-
-            head:
-                skeleton.getBone("head")
+            spineLower: skeleton.getBone("spineLower"),
+            spineMid: skeleton.getBone("spineMid"),
+            spineUpper: skeleton.getBone("spineUpper"),
+            chest: skeleton.getBone("chest"),
+            upperArmL: skeleton.getBone("upperArmL"),
+            upperArmR: skeleton.getBone("upperArmR"),
+            forearmL: skeleton.getBone("forearmL"),
+            forearmR: skeleton.getBone("forearmR"),
+            neck: skeleton.getBone("neck"),
+            head: skeleton.getBone("head")
         };
 
-
-        for (
-            const [name, bone]
-            of Object.entries(this.bones)
-        ) {
+        for (const [name, bone] of Object.entries(this.bones)) {
 
             if (!bone) {
                 throw new Error(
@@ -182,43 +109,25 @@ export default class FullBodyController {
             }
         }
 
-
-        // -------------------------------------------------
-        // Цели и сглаженные значения
-        // -------------------------------------------------
-
         this.targets = {};
         this.offsets = {};
 
-
-        for (
-            const name
-            of Object.keys(this.bones)
-        ) {
+        for (const name of Object.keys(this.bones)) {
 
             this.targets[name] = 0;
             this.offsets[name] = 0;
         }
 
-
         this.intensity = 0;
-
         this.previousSpeed = 0;
-
         this.acceleration = 0;
-
         this.hasPreviousSpeed = false;
     }
 
-
-    // =====================================================
-    // UPDATE
-    // =====================================================
-
-    update(
-        dt,
-        context = {}
-    ) {
+    /**
+     * @returns {object} offsets  — additive localAngle offsets
+     */
+    update(dt, context = {}) {
 
         const safeDt =
             clamp(
@@ -227,86 +136,46 @@ export default class FullBodyController {
                 0.1
             );
 
-
         if (safeDt <= 0) {
-            return;
+            return { ...this.offsets };
         }
-
-
-        // -------------------------------------------------
-        // Внешние зависимости могут передаваться
-        // непосредственно через context.
-        // -------------------------------------------------
 
         if (context.gravityFrame) {
-
-            this.gravityFrame =
-                context.gravityFrame;
+            this.gravityFrame = context.gravityFrame;
         }
-
 
         if (context.gait) {
-
-            this.gait =
-                context.gait;
+            this.gait = context.gait;
         }
-
 
         const speed =
             Math.max(
                 0,
-                finite(
-                    context.speed,
-                    0
-                )
+                finite(context.speed, 0)
             );
-
 
         const moving =
             context.isMoving === true ||
             speed > 0.5;
 
-
         const moveAngle =
-            finite(
-                context.moveAngle,
-                0
-            );
-
+            finite(context.moveAngle, 0);
 
         const lookAngle =
-            finite(
-                context.lookAngle,
-                moveAngle
-            );
-
+            finite(context.lookAngle, moveAngle);
 
         const turnRate =
-            finite(
-                context.turnRate,
-                0
-            );
+            finite(context.turnRate, 0);
 
-
-        // -------------------------------------------------
-        // ИНТЕНСИВНОСТЬ ДВИЖЕНИЯ
-        // -------------------------------------------------
-
+        // Intensity
         const speedRatio =
             clamp01(
                 speed /
-                Math.max(
-                    1,
-                    this.tuning.speedForFullIntensity
-                )
+                Math.max(1, this.tuning.speedForFullIntensity)
             );
 
-
         const targetIntensity =
-            moving
-                ? speedRatio
-                : 0;
-
+            moving ? speedRatio : 0;
 
         this.intensity =
             damp(
@@ -316,23 +185,12 @@ export default class FullBodyController {
                 safeDt
             );
 
-
-        // -------------------------------------------------
-        // УСКОРЕНИЕ
-        // -------------------------------------------------
-
+        // Acceleration
         if (this.hasPreviousSpeed) {
 
             const rawAcceleration =
-                (
-                    speed -
-                    this.previousSpeed
-                ) /
-                Math.max(
-                    safeDt,
-                    0.0001
-                );
-
+                (speed - this.previousSpeed) /
+                Math.max(safeDt, 0.0001);
 
             this.acceleration =
                 damp(
@@ -344,72 +202,33 @@ export default class FullBodyController {
 
         } else {
 
-            this.hasPreviousSpeed =
-                true;
-
-            this.acceleration =
-                0;
+            this.hasPreviousSpeed = true;
+            this.acceleration = 0;
         }
 
+        this.previousSpeed = speed;
 
-        this.previousSpeed =
-            speed;
-
-
-        // -------------------------------------------------
-        // BODY STATE
-        // -------------------------------------------------
-
+        // BodyState
         let balance = null;
 
-        if (
-            typeof this.bodyState.getBalance ===
-            "function"
-        ) {
-
-            balance =
-                this.bodyState.getBalance();
+        if (typeof this.bodyState.getBalance === "function") {
+            balance = this.bodyState.getBalance();
         }
 
-
         const weight =
-            this.bodyState.weightDistribution ||
-            {
+            this.bodyState.weightDistribution || {
                 left: 0.5,
                 right: 0.5
             };
 
-
         const leftWeight =
-            clamp(
-                finite(
-                    weight.left,
-                    0.5
-                ),
-                0,
-                1
-            );
-
+            clamp(finite(weight.left, 0.5), 0, 1);
 
         const rightWeight =
-            clamp(
-                finite(
-                    weight.right,
-                    0.5
-                ),
-                0,
-                1
-            );
-
+            clamp(finite(weight.right, 0.5), 0, 1);
 
         const weightShift =
-            clamp(
-                rightWeight -
-                leftWeight,
-                -1,
-                1
-            );
-
+            clamp(rightWeight - leftWeight, -1, 1);
 
         const balanceBoost =
             balance &&
@@ -418,95 +237,39 @@ export default class FullBodyController {
                 ? this.tuning.unstableBoost
                 : 1;
 
-
-        // -------------------------------------------------
-        // GRAVITY FRAME
-        //
-        // Сам FBC не вращает скелет.
-        // Character уже должен поставить root
-        // согласно GravityFrame.
-        //
-        // Здесь наличие frame используется как
-        // сигнал, что окружение подключено.
-        // -------------------------------------------------
-
+        // Gravity frame
         const frame =
             this.gravityFrame?.frame ||
             (
-                typeof this.gravityFrame?.getFrame ===
-                "function"
+                typeof this.gravityFrame?.getFrame === "function"
                     ? this.gravityFrame.getFrame()
                     : null
             );
 
+        const environmentActive = !!frame;
 
-        const environmentActive =
-            !!frame;
-
-
-        // -------------------------------------------------
-        // GAIT
-        // -------------------------------------------------
-
+        // Gait phase
         const gaitPhase =
             this.gait &&
-            Number.isFinite(
-                this.gait.phase
-            )
+            Number.isFinite(this.gait.phase)
                 ? this.gait.phase
-                : finite(
-                    context.gaitPhase,
-                    0
-                );
+                : finite(context.gaitPhase, 0);
 
+        const phase = clamp(gaitPhase, 0, 1);
+        const cycle = phase * Math.PI * 2;
+        const stride = Math.sin(cycle);
+        const oppositeStride = -stride;
 
-        const phase =
-            clamp(
-                gaitPhase,
-                0,
-                1
-            );
+        const locomotion = clamp01(this.intensity);
 
-
-        const cycle =
-            phase *
-            Math.PI *
-            2;
-
-
-        const stride =
-            Math.sin(cycle);
-
-
-        const oppositeStride =
-            -stride;
-
-
-        // -------------------------------------------------
-        // ИНТЕНСИВНОСТЬ
-        // -------------------------------------------------
-
-        const locomotion =
-            clamp01(
-                this.intensity
-            );
-
-
-        // -------------------------------------------------
-        // COM / BALANCE
-        // -------------------------------------------------
-
+        // Balance lateral
         let balanceLateral = 0;
-
 
         if (
             balance &&
             balance.comOffset &&
-            Number.isFinite(
-                balance.comOffset.x
-            )
+            Number.isFinite(balance.comOffset.x)
         ) {
-
             balanceLateral =
                 clamp(
                     balance.comOffset.x / 24,
@@ -515,91 +278,54 @@ export default class FullBodyController {
                 );
         }
 
-
-        // -------------------------------------------------
-        // УСКОРЕНИЕ
-        // -------------------------------------------------
-
+        // Acceleration input
         const accelerationInput =
             clamp(
                 this.acceleration /
-                Math.max(
-                    1,
-                    this.tuning.speedForFullIntensity
-                ),
+                Math.max(1, this.tuning.speedForFullIntensity),
                 -1,
                 1
             );
 
-
-        // -------------------------------------------------
-        // НАКЛОН ВПЕРЁД
-        // -------------------------------------------------
-
+        // Forward lean
         let forward =
-            locomotion *
-            this.tuning.forwardLean;
-
+            locomotion * this.tuning.forwardLean;
 
         forward +=
-            accelerationInput *
-            this.tuning.accelerationLean;
+            accelerationInput * this.tuning.accelerationLean;
 
-
-        // Если окружение реально подключено,
-        // баланс получает немного больший вес.
         if (environmentActive) {
-
-            forward *=
-                1;
+            forward *= 1;
         }
 
-
-        // -------------------------------------------------
-        // БОКОВОЙ БАЛАНС
-        // -------------------------------------------------
-
+        // Lateral
         const lateral =
             balanceLateral *
             this.tuning.lateralBalance *
             balanceBoost;
 
-
-        // -------------------------------------------------
-        // ПЕРЕНОС ВЕСА
-        // -------------------------------------------------
-
+        // Weight transfer
         const transfer =
             weightShift *
             this.tuning.torsoCounter *
             0.6;
 
-
-        // -------------------------------------------------
-        // РИТМ ТУЛОВИЩА
-        // -------------------------------------------------
-
+        // Torso rhythm
         const torsoRhythm =
             stride *
             this.tuning.torsoRhythm *
             locomotion;
 
-
-        // -------------------------------------------------
-        // ПОЗВОНОЧНИК
-        // -------------------------------------------------
-
+        // Spine
         this.targets.spineLower =
             clamp(
                 forward * 0.34 +
                 lateral * 0.35 +
                 transfer * 0.30 +
                 torsoRhythm * 0.30,
-
                 -this.tuning.maxSpine,
                 this.tuning.maxSpine
             );
-
 
         this.targets.spineMid =
             clamp(
@@ -607,11 +333,9 @@ export default class FullBodyController {
                 lateral * 0.30 +
                 transfer * 0.20 +
                 torsoRhythm * 0.50,
-
                 -this.tuning.maxSpine,
                 this.tuning.maxSpine
             );
-
 
         this.targets.spineUpper =
             clamp(
@@ -619,176 +343,93 @@ export default class FullBodyController {
                 lateral * 0.20 +
                 transfer * 0.10 +
                 torsoRhythm * 0.30,
-
                 -this.tuning.maxSpine,
                 this.tuning.maxSpine
             );
 
-
-        // -------------------------------------------------
-        // ГРУДЬ
-        // -------------------------------------------------
-
+        // Chest
         this.targets.chest =
             clamp(
-                -torsoRhythm *
-                this.tuning.torsoCounter,
-
+                -torsoRhythm * this.tuning.torsoCounter,
                 -this.tuning.maxSpine,
                 this.tuning.maxSpine
             );
 
-
-        // -------------------------------------------------
-        // ПЛЕЧИ
-        // -------------------------------------------------
-
+        // Shoulders / arms
         const shoulderCounter =
             oppositeStride *
             this.tuning.shoulderCounter *
             locomotion;
 
-
-        // -------------------------------------------------
-        // РУКИ
-        // -------------------------------------------------
-
         const armAmplitude =
             moving
                 ? Math.max(
                     this.tuning.armSwingMin,
-                    this.tuning.armSwing *
-                    locomotion
+                    this.tuning.armSwing * locomotion
                 )
                 : this.tuning.armSwingMin;
-
 
         const turnDamping =
             1 -
             Math.min(
                 0.35,
-                Math.abs(turnRate) *
-                0.04
+                Math.abs(turnRate) * 0.04
             );
-
 
         this.targets.upperArmL =
             clamp(
-                (
-                    stride *
-                    armAmplitude +
-                    shoulderCounter
-                ) *
+                (stride * armAmplitude + shoulderCounter) *
                 turnDamping,
-
                 -this.tuning.maxArm,
                 this.tuning.maxArm
             );
-
 
         this.targets.upperArmR =
             clamp(
-                (
-                    oppositeStride *
-                    armAmplitude -
-                    shoulderCounter
-                ) *
+                (oppositeStride * armAmplitude - shoulderCounter) *
                 turnDamping,
-
                 -this.tuning.maxArm,
                 this.tuning.maxArm
             );
 
-
-        // -------------------------------------------------
-        // ЛОКТИ
-        // -------------------------------------------------
-
+        // Elbows
         const elbow =
             this.tuning.elbowBase +
             Math.abs(stride) *
             this.tuning.elbowFlex *
             locomotion;
 
-
         this.targets.forearmL =
-            clamp(
-                elbow,
-                -this.tuning.maxArm,
-                this.tuning.maxArm
-            );
-
+            clamp(elbow, -this.tuning.maxArm, this.tuning.maxArm);
 
         this.targets.forearmR =
-            clamp(
-                elbow,
-                -this.tuning.maxArm,
-                this.tuning.maxArm
-            );
+            clamp(elbow, -this.tuning.maxArm, this.tuning.maxArm);
 
-
-        // -------------------------------------------------
-        // ГОЛОВА
-        // -------------------------------------------------
-
+        // Head / neck
         const lookDelta =
-            shortestAngleDelta(
-                moveAngle,
-                lookAngle
-            );
-
+            shortestAngleDelta(moveAngle, lookAngle);
 
         const lookInput =
-            clamp(
-                lookDelta /
-                Math.PI,
-                -1,
-                1
-            );
-
-
-        // -------------------------------------------------
-        // ШЕЯ
-        // -------------------------------------------------
+            clamp(lookDelta / Math.PI, -1, 1);
 
         this.targets.neck =
             clamp(
-                lookInput *
-                this.tuning.neckLook -
-
-                torsoRhythm *
-                0.20,
-
+                lookInput * this.tuning.neckLook -
+                torsoRhythm * 0.20,
                 -this.tuning.maxHead,
                 this.tuning.maxHead
             );
-
-
-        // -------------------------------------------------
-        // ГОЛОВА
-        // -------------------------------------------------
 
         this.targets.head =
             clamp(
-                lookInput *
-                this.tuning.headLook -
-
-                torsoRhythm *
-                this.tuning.headStabilize,
-
+                lookInput * this.tuning.headLook -
+                torsoRhythm * this.tuning.headStabilize,
                 -this.tuning.maxHead,
                 this.tuning.maxHead
             );
 
-
-        // -------------------------------------------------
-        // СГЛАЖИВАНИЕ
-        // -------------------------------------------------
-
-        for (
-            const name
-            of Object.keys(this.offsets)
-        ) {
+        // Smoothing
+        for (const name of Object.keys(this.offsets)) {
 
             const isArm =
                 name === "upperArmL" ||
@@ -796,31 +437,19 @@ export default class FullBodyController {
                 name === "forearmL" ||
                 name === "forearmR";
 
-
             const isHead =
                 name === "neck" ||
                 name === "head";
 
-
             let rate;
 
-
             if (isHead) {
-
-                rate =
-                    this.tuning.headDamp;
-
+                rate = this.tuning.headDamp;
             } else if (isArm) {
-
-                rate =
-                    this.tuning.armDamp;
-
+                rate = this.tuning.armDamp;
             } else {
-
-                rate =
-                    this.tuning.torsoDamp;
+                rate = this.tuning.torsoDamp;
             }
-
 
             this.offsets[name] =
                 damp(
@@ -831,197 +460,59 @@ export default class FullBodyController {
                 );
         }
 
+        // CRITICAL: больше НЕ вызываем applyPose()
+        // Возвращаем offsets для PoseComposer
 
-        // -------------------------------------------------
-        // APPLY
-        // -------------------------------------------------
-
-        this.applyPose();
+        return { ...this.offsets };
     }
-
-
-    // =====================================================
-    // APPLY POSE
-    // =====================================================
-
-    applyPose() {
-
-        for (
-            const [name, bone]
-            of Object.entries(this.bones)
-        ) {
-
-            const restAngle =
-                finite(
-                    bone.restAngle,
-                    0
-                );
-
-
-            const offset =
-                clamp(
-                    finite(
-                        this.offsets[name],
-                        0
-                    ),
-                    -Math.PI,
-                    Math.PI
-                );
-
-
-            bone.localAngle =
-                restAngle +
-                offset;
-        }
-    }
-
-
-    // =====================================================
-    // RESET
-    // =====================================================
 
     reset() {
 
-        for (
-            const name
-            of Object.keys(this.targets)
-        ) {
+        for (const name of Object.keys(this.targets)) {
 
-            this.targets[name] =
-                0;
-
-            this.offsets[name] =
-                0;
+            this.targets[name] = 0;
+            this.offsets[name] = 0;
         }
 
-
-        this.intensity =
-            0;
-
-        this.previousSpeed =
-            0;
-
-        this.acceleration =
-            0;
-
-        this.hasPreviousSpeed =
-            false;
-
-
-        this.applyPose();
+        this.intensity = 0;
+        this.previousSpeed = 0;
+        this.acceleration = 0;
+        this.hasPreviousSpeed = false;
     }
 
-
-    // =====================================================
-    // CONNECTIONS
-    // =====================================================
-
-    setGravityFrame(
-        gravityFrame
-    ) {
-
-        this.gravityFrame =
-            gravityFrame || null;
+    setGravityFrame(gravityFrame) {
+        this.gravityFrame = gravityFrame || null;
     }
 
-
-    setGait(
-        gait
-    ) {
-
-        this.gait =
-            gait || null;
+    setGait(gait) {
+        this.gait = gait || null;
     }
-
-
-    // =====================================================
-    // STATE
-    // =====================================================
 
     getState() {
 
         return {
-
-            intensity:
-                this.intensity,
-
-            acceleration:
-                this.acceleration,
-
-            targets: {
-                ...this.targets
-            },
-
-            offsets: {
-                ...this.offsets
-            }
+            intensity: this.intensity,
+            acceleration: this.acceleration,
+            targets: { ...this.targets },
+            offsets: { ...this.offsets }
         };
     }
 
-
-    // =====================================================
-    // VALIDATION
-    // =====================================================
-
     validate() {
 
-        if (!this.skeleton) {
+        if (!this.skeleton || !this.bodyState) {
             return false;
         }
 
-        if (!this.bodyState) {
-            return false;
-        }
+        const finiteObject = object =>
+            Object.values(object).every(
+                value => Number.isFinite(value)
+            );
 
-
-        const finiteObject =
-            object =>
-                Object.values(object)
-                    .every(
-                        value =>
-                            Number.isFinite(value)
-                    );
-
-
-        if (
-            !finiteObject(
-                this.targets
-            )
-        ) {
-
-            return false;
-        }
-
-
-        if (
-            !finiteObject(
-                this.offsets
-            )
-        ) {
-
-            return false;
-        }
-
-
-        if (
-            !Number.isFinite(
-                this.intensity
-            )
-        ) {
-
-            return false;
-        }
-
-
-        if (
-            !Number.isFinite(
-                this.acceleration
-            )
-        ) {
-
-            return false;
-        }
-
+        if (!finiteObject(this.targets)) return false;
+        if (!finiteObject(this.offsets)) return false;
+        if (!Number.isFinite(this.intensity)) return false;
+        if (!Number.isFinite(this.acceleration)) return false;
 
         return true;
     }
